@@ -4,7 +4,7 @@ import jax
 from jax import numpy as jnp, random as jr
 import pytest
 
-from miniflows.causal_mlp import CausalLinear, CausalMLP
+from bijax.causal_mlp import CausalLinear, CausalMLP
 
 
 def test_causal_linear_respects_ranks():

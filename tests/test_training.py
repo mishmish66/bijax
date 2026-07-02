@@ -10,8 +10,8 @@ from jax.scipy.stats import norm
 import equinox as eqx
 import optax
 
-from miniflows.causal_mlp import CausalMLP
-from miniflows.mansf import ARSpline
+from bijax.causal_mlp import CausalMLP
+from bijax.mansf import ARSpline
 
 N_BINS = 8
 GAUSSIAN_NLL = 2.84  # mean NLL of a unit Gaussian on the standardised data

@@ -3,8 +3,8 @@
 import jax
 from jax import numpy as jnp, random as jr
 
-from miniflows.causal_mlp import CausalMLP
-from miniflows.maf import ARAffine
+from bijax.causal_mlp import CausalMLP
+from bijax.maf import ARAffine
 
 
 def make_araffine(key, dim: int = 2, width: int = 64, depth: int = 2) -> ARAffine:

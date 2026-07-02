@@ -28,8 +28,8 @@ import jax
 from jax import numpy as jnp
 import equinox as eqx
 
-from miniflows.spline import spline_fwd, spline_inv
-from miniflows.causal_mlp import CausalMLP
+from bijax.spline import spline_fwd, spline_inv
+from bijax.causal_mlp import CausalMLP
 
 
 class ARSpline(eqx.Module):

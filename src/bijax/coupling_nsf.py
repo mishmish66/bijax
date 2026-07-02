@@ -17,7 +17,7 @@ from jax import numpy as jnp
 import equinox as eqx
 from jaxtyping import Float, Array
 
-from miniflows.spline import spline_fwd, spline_inv
+from bijax.spline import spline_fwd, spline_inv
 
 
 class SplineCoupling(eqx.Module):

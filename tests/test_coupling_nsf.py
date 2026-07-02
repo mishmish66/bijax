@@ -5,7 +5,7 @@ from jax import numpy as jnp, random as jr
 import equinox as eqx
 import pytest
 
-from miniflows.coupling_nsf import SplineCoupling
+from bijax.coupling_nsf import SplineCoupling
 
 N_BINS = 8
 

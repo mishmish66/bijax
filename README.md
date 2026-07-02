@@ -1,4 +1,4 @@
-# Mini Flows
+# bijax
 
 This is a really small equinox flows library that only depends on equinox.
 The scope of this is very small, it's really just meant to give some basic neural bijections.

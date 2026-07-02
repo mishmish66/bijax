@@ -4,7 +4,7 @@ import jax
 from jax import numpy as jnp, random as jr
 import pytest
 
-from miniflows.plu import PLU
+from bijax.plu import PLU
 
 
 # ---------------------------------------------------------------------------

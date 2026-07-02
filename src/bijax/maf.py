@@ -17,7 +17,7 @@ from jaxtyping import Float, Array
 from jax import numpy as jnp
 import equinox as eqx
 
-from miniflows.causal_mlp import CausalMLP
+from bijax.causal_mlp import CausalMLP
 
 
 class ARAffine(eqx.Module):

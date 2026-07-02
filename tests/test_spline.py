@@ -4,7 +4,7 @@ import jax
 from jax import numpy as jnp, random as jr
 import pytest
 
-from miniflows.spline import RationalQuadratic, RationalQuadraticSpline, spline_fwd
+from bijax.spline import RationalQuadratic, RationalQuadraticSpline, spline_fwd
 
 N_BINS = 8
 

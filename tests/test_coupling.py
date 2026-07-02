@@ -10,7 +10,7 @@ from jax import numpy as jnp, random as jr
 import equinox as eqx
 import pytest
 
-from miniflows.coupling_aff import AffineCoupling
+from bijax.coupling_aff import AffineCoupling
 
 
 # ---------------------------------------------------------------------------

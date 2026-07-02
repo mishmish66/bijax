@@ -4,8 +4,8 @@ import equinox as eqx
 import jax
 from jax import numpy as jnp, random as jr
 
-from miniflows.causal_mlp import CausalMLP
-from miniflows.mansf import ARSpline
+from bijax.causal_mlp import CausalMLP
+from bijax.mansf import ARSpline
 
 N_BINS = 8
 
