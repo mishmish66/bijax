@@ -24,8 +24,7 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: uv sync --python ${{ matrix.python-version }}
-
+      # Runs every nox session bound to this Python: the latest-jax session on
+      # all versions, plus the floor-jax session on the oldest.
       - name: Run tests
-        run: uv run --python ${{ matrix.python-version }} pytest
+        run: uvx nox -p ${{ matrix.python-version }}
