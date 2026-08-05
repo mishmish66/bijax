@@ -35,7 +35,7 @@
 """
 
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, overload
 from itertools import pairwise
 
 from jax import numpy as jnp
@@ -63,12 +63,24 @@ class CausalLinear(eqx.Module):
         *,
         rng: Key[Array, ""],
     ):
+        """A flexible masked linear layer.
+
+        This layer supports flexible dependencies between inputs and outputs in
+        the form of ranks. Each output can depend only on inputs with the same
+        or lower rank. This also means that for lower ranking outputs the
+        effective number of parameters involved in the computation is quite low.
+
+        Args:
+          in_ranks: List with length of input dim specifying the rank of each
+          out_ranks: List with length of output dim specifying the rank of each
+          rng: key for random parameter generation
+        """
         self.in_dim = len(in_ranks)
         self.out_dim = len(out_ranks)
 
         # mask[i, j] is True when output j may read input i, laid out as
         # (in_dim, out_dim) so it indexes the weight matrix directly.
-        mask = jnp.array(in_ranks)[:, None] < jnp.array(out_ranks)[None, :]
+        mask = jnp.array(in_ranks)[:, None] <= jnp.array(out_ranks)[None, :]
         fan_in = mask.sum(axis=0)
         lim = 1.0 / jnp.sqrt(fan_in.clip(min=1))
 
@@ -102,6 +114,7 @@ class CausalMLP(eqx.Module):
     in_rank_dim: int | Literal["scalar"] = eqx.field(static=True)
     out_rank_dim: int | Literal["scalar"] = eqx.field(static=True)
 
+    @overload
     def __init__(
         self,
         num_ranks: int,
@@ -110,6 +123,74 @@ class CausalMLP(eqx.Module):
         width: int,
         depth: int,
         *,
+        activation: Callable[[Array], Array] = jax.nn.gelu,
+        rng: Key[Array, ""],
+    ):
+        """Randomly intialize a CausalMLP
+
+        A CausalMLP is a special kind of MLP where each output of a rank depends
+        only on the inputs of at most its rank. The conditioning dimension
+        is separate because sometimes more processing of the condition might
+        be desirable, but the number of parameters involved in processing the
+        condition will be lower for lower ranks because they don't make use of
+        the higher rank's parameters.
+
+        Args:
+          num_ranks: Number of ranks to consider (not counting the condition)
+          in_rank_dim: Dimension of each rank's input
+          out_rank_dim: Dimension of each rank's output
+          width: The width of the hidden dim for (non condition)
+          depth: The number of layers (0 makes it just a CausalLinear)
+          activation: The nonlinearity to apply between layers
+          rng: A random key to generate the parameters
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        num_ranks: int,
+        in_rank_dim: int | Literal["scalar"],
+        out_rank_dim: int | Literal["scalar"],
+        width: int,
+        depth: int,
+        *,
+        cond_dim: int,
+        cond_width: int | None = None,
+        activation: Callable[[Array], Array] = jax.nn.gelu,
+        rng: Key[Array, ""],
+    ):
+        """Randomly intialize a CausalMLP
+
+        A CausalMLP is a special kind of MLP where each output of a rank depends
+        only on the inputs of at most its rank. The conditioning dimension
+        is separate because sometimes more processing of the condition might
+        be desirable, but the number of parameters involved in processing the
+        condition will be lower for lower ranks because they don't make use of
+        the higher rank's parameters.
+
+        Args:
+          num_ranks: Number of ranks to consider (not counting the condition)
+          in_rank_dim: Dimension of each rank's input
+          out_rank_dim: Dimension of each rank's output
+          width: Width of the hidden dim for (non condition)
+          depth: Number of layers (0 makes it just a CausalLinear)
+          cond_width: Width of hidden dims for condition inputs
+          cond_dim: Dimension of conditioning input
+          activation: Nonlinearity between layers
+          rng: Random key generating parameters
+        """
+        ...
+
+    def __init__(
+        self,
+        num_ranks: int,
+        in_rank_dim: int | Literal["scalar"],
+        out_rank_dim: int | Literal["scalar"],
+        width: int,
+        depth: int,
+        *,
+        cond_width: int | None = None,
         cond_dim: int | None = None,
         activation: Callable[[Array], Array] = jax.nn.gelu,
         rng: Key[Array, ""],
@@ -128,32 +209,24 @@ class CausalMLP(eqx.Module):
         if out_rank_dim == "scalar":
             out_rank_dim = 1
 
-        # each layer is a (dim, per_row) grid flattened row-major: row r is a
-        # contiguous block of units all carrying that row's rank. Coordinates
-        # carry ranks 1..num_ranks and the conditioner carries rank 0, so
-        # rank-0 hidden units read only the conditioner and every coordinate's
-        # read-out, coordinate 0's included, can reach them.
+        # create layer ranks
         in_ranks = [r + 1 for r in range(num_ranks) for _ in range(in_rank_dim)]
+        hidden_ranks = [r + 1 for r in range(num_ranks - 1) for _ in range(width)]
         if cond_dim is not None:
+            if cond_width is None:
+                cond_width = width
             in_ranks.extend([0] * cond_dim)
-        hidden_ranks = [r for r in range(num_ranks) for _ in range(width)]
-        ranks = [in_ranks] + [hidden_ranks] * depth
+            hidden_ranks.extend([0] * cond_width)
 
-        # Hidden layers read inclusively (a rank-r unit may use rank-r inputs).
-        # CausalLinear compares in_rank < out_rank, so bumping the out-ranks by
-        # one turns that strict `<` into an inclusive `<=`.
+        # omit +1 so out r0 reads only hidden r0 (cond)
+        out_ranks = [r for r in range(num_ranks) for _ in range(out_rank_dim)]
+        ranks = [in_ranks] + [hidden_ranks] * depth + [out_ranks]
+
+        # layers
         layers = []
         for ranks_in, ranks_out in pairwise(ranks):
             rng, key = jr.split(rng)
-            incl = [r + 1 for r in ranks_out]
-            layers.append(CausalLinear(ranks_in, incl, rng=key))
-
-        # Final read-out stays strict: coordinate r (rank r+1) sees hidden ranks
-        # <= r, which read x_{<r} and the conditioner. Emits `out_rank_dim`
-        # units per coordinate (row-major: row r is its block).
-        rng, key = jr.split(rng)
-        ranks_out = [r + 1 for r in range(num_ranks) for _ in range(out_rank_dim)]
-        layers.append(CausalLinear(ranks[-1], ranks_out, rng=key))
+            layers.append(CausalLinear(ranks_in, ranks_out, rng=key))
 
         self.layers = layers
         self.activation = activation

@@ -24,7 +24,7 @@ class ARAffine(eqx.Module):
     """Masked-autoregressive affine layer.
 
     `net` maps each coordinate's predecessors to a (log-scale, shift) pair, so
-    the forward pass is a single vectorised call and the inverse is solved one
+    the forward pass is a single vectorized call and the inverse is solved one
     coordinate at a time.
     """
 

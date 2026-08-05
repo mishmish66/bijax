@@ -8,13 +8,14 @@ from bijax.causal_mlp import CausalLinear, CausalMLP
 
 
 def test_causal_linear_respects_ranks():
-    # out 0 (rank 0) reads nothing; out 1 (rank 1) reads the two rank-0 inputs.
+    # reads are inclusive: out 0 (rank 0) reads the two rank 0 inputs but not
+    # the rank 1 input; out 1 (rank 1) reads all inputs.
     lay = CausalLinear([0, 0, 1], [0, 1], rng=jr.key(0))
     x = jnp.array([1.0, 1.0, 1.0])
     J = jax.jacobian(lay)(x)
-    assert jnp.allclose(J[0], 0.0)
-    assert jnp.all(jnp.abs(J[1, :2]) > 0)
-    assert jnp.allclose(J[1, 2], 0.0)
+    assert jnp.all(jnp.abs(J[0, :2]) > 0)
+    assert jnp.allclose(J[0, 2], 0.0)
+    assert jnp.all(jnp.abs(J[1]) > 0)
 
 
 def test_causal_linear_shapes():
@@ -115,8 +116,8 @@ def _connectivity_mask(lay: CausalLinear):
 
 @pytest.mark.parametrize("cond_dim", [None, 4])
 def test_causal_mlp_has_no_dead_hidden_units(cond_dim):
-    # every hidden unit must have a path to some output; the strict read-out
-    # must not orphan an entire rank block of each hidden layer.
+    # every hidden unit must have a path to some output; the read-out must not
+    # orphan an entire rank block of each hidden layer.
     dim = 5
     m = CausalMLP(
         num_ranks=dim,
