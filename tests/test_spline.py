@@ -10,8 +10,8 @@ N_BINS = 8
 
 
 def _random_segment(key):
-    e0, e1 = jnp.exp(0.5 * jr.normal(key, (2,)))
-    return RationalQuadratic(e0=e0, e1=e1)
+    le0, le1 = 0.5 * jr.normal(key, (2,))
+    return RationalQuadratic(le0=le0, le1=le1)
 
 
 def _random_params(key, n_bins=N_BINS):
@@ -19,7 +19,7 @@ def _random_params(key, n_bins=N_BINS):
 
 
 def test_segment_maps_unit_endpoints():
-    seg = RationalQuadratic(e0=jnp.array(1.3), e1=jnp.array(0.7))
+    seg = RationalQuadratic(le0=jnp.log(jnp.array(1.3)), le1=jnp.log(jnp.array(0.7)))
     assert jnp.allclose(seg.fwd(jnp.array(0.0)), 0.0, atol=1e-6)
     assert jnp.allclose(seg.fwd(jnp.array(1.0)), 1.0, atol=1e-6)
 
@@ -33,11 +33,11 @@ def test_segment_roundtrip():
         assert jnp.allclose(zr, z, atol=1e-4)
 
 
-def test_segment_dydx_matches_autodiff():
+def test_segment_log_dydx_matches_autodiff():
     seg = _random_segment(jr.key(0))
     for z in jnp.linspace(0.05, 0.95, 10):
         ad = jax.grad(lambda z: seg.fwd(z))(z)
-        assert jnp.allclose(ad, seg.dydx(z), atol=1e-4)
+        assert jnp.allclose(jnp.log(ad), seg.log_dydx(z), atol=1e-4)
 
 
 def test_segment_monotone():
@@ -54,11 +54,21 @@ def test_decode_rejects_bad_param_length(bad_len):
 
 def test_decode_accepts_valid_length():
     spline = RationalQuadraticSpline.decode(_random_params(jr.key(0)))
-    # knots partition [0,1] in both axes
-    assert jnp.allclose(spline.k_x0s[0], 0.0)
-    assert jnp.allclose(spline.k_x1s[-1], 1.0, atol=1e-5)
-    assert jnp.allclose(spline.k_y0s[0], 0.0)
-    assert jnp.allclose(spline.k_y1s[-1], 1.0, atol=1e-5)
+    ws, hs = jnp.exp(spline.log_k_ws), jnp.exp(spline.log_k_hs)
+    # bins are positive and partition [x0, x0+1] x [y0, y0+1]
+    assert jnp.all(ws > 0) and jnp.all(hs > 0)
+    assert jnp.allclose(ws.sum(), 1.0, atol=1e-5)
+    assert jnp.allclose(hs.sum(), 1.0, atol=1e-5)
+
+
+def test_spline_maps_unit_interval():
+    # the cumulative knots must span [0,1] on both axes, so the last bin ends
+    # exactly at the identity tails
+    spline = RationalQuadraticSpline.decode(_random_params(jr.key(0)))
+    y_lo, _ = spline.fwd_logdet(jnp.array(1e-6))
+    y_hi, _ = spline.fwd_logdet(jnp.array(1.0 - 1e-6))
+    assert jnp.allclose(y_lo, 0.0, atol=1e-5)
+    assert jnp.allclose(y_hi, 1.0, atol=1e-5)
 
 
 def test_spline_roundtrip_inside_unit():
