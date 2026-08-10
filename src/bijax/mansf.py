@@ -22,6 +22,8 @@
 }
 """
 
+from typing import Literal
+
 from jaxtyping import Float, Array
 
 import jax
@@ -39,37 +41,54 @@ class ARSpline(eqx.Module):
     low: float = eqx.field(static=True, default=-5.0)
     high: float = eqx.field(static=True, default=5.0)
     min_slope: float = eqx.field(static=True, default=1e-3)
+    direction: Literal["maf"] | Literal["iaf"] = eqx.field(static=True, default="maf")
 
     def fwd_logdet(self, x: Float[Array, " d"], c: Float[Array, " c"] | None = None):
-        params = self.net(x, c)  # (dim,) scalar-per-row -> (dim, n_params)
-        z, ld = jax.vmap(spline_fwd, in_axes=(0, 0, None, None, None))(
-            x,
+        if self.direction == "maf":
+            return self._slow(x, c)
+        if self.direction == "iaf":
+            return self._fast(x, c)
+        msg = f"direction must be maf or iaf not {self.direction}"
+        raise ValueError(msg)
+
+    def inv_logdet(self, y: Float[Array, " d"], c: Float[Array, " c"] | None = None):
+        if self.direction == "maf":
+            return self._fast(y, c)
+        if self.direction == "iaf":
+            return self._slow(y, c)
+        msg = f"direction must be maf or iaf not {self.direction}"
+        raise ValueError(msg)
+
+    def _fast(self, inp: Float[Array, " d"], c: Float[Array, " c"] | None = None):
+        params = self.net(inp, c)  # (dim,) scalar-per-row -> (dim, n_params)
+        outp, ld = jax.vmap(spline_fwd, in_axes=(0, 0, None, None, None))(
+            inp,
             params,
             jnp.array(self.low),
             jnp.array(self.high),
             self.min_slope,
         )
-        return z, ld.sum()
+        return outp, ld.sum()
 
-    def inv_logdet(self, z: Float[Array, " d"], c: Float[Array, " c"] | None = None):
-        x = jnp.zeros(self.net.num_ranks)
+    def _slow(self, inp: Float[Array, " d"], c: Float[Array, " c"] | None = None):
+        outp = jnp.zeros(self.net.num_ranks)
         for i in range(self.net.num_ranks):
-            params = self.net(x, c)  # (dim, n_params)
-            xi, _ = spline_inv(
-                z[i],
+            params = self.net(outp, c)  # (dim, n_params)
+            outp_i, _ = spline_inv(
+                inp[i],
                 params[i],
                 jnp.array(self.low),
                 jnp.array(self.high),
                 self.min_slope,
             )
-            x = x.at[i].set(xi)
+            outp = outp.at[i].set(outp_i)
         # log-det of the inverse is minus that of the forward at the solved x
-        params = self.net(x, c)
+        params = self.net(outp, c)
         _, ld = jax.vmap(spline_fwd, in_axes=(0, 0, None, None, None))(
-            x,
+            outp,
             params,
             jnp.array(self.low),
             jnp.array(self.high),
             self.min_slope,
         )
-        return x, -ld.sum()
+        return outp, -ld.sum()
