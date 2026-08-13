@@ -127,10 +127,13 @@ class _RationalQuadraticSpline(eqx.Module):
         a = (yrb - ylb) * (s - dl) + (y - ylb) * (dr + dl - 2 * s)
         b = (yrb - ylb) * dl - (y - ylb) * (dr + dl - 2 * s)
         c = -s * (y - ylb)
-        disc = jnp.sqrt(jnp.maximum(b**2 - 4 * a * c, 0.0))
-        q = -0.5 * (b + jnp.sign(b) * disc)
-        a_safe = jax.lax.select(b > 0, 1.0, a)
-        ζomζ = (ζ := jax.lax.select(b > 0, c / q, q / a_safe)) * (omζ := 1 - ζ)
+        bsqm4ac = b**2 - 4 * a * c
+        safe_sqin = jnp.where(bsqm4ac > 0, bsqm4ac, 1.0)
+        disc = jnp.where(bsqm4ac > 0, jnp.sqrt(safe_sqin), 0.0)
+        bsign = jnp.where(b >= 0, 1.0, -1.0)
+        q = -0.5 * (b + bsign * disc)
+        a_safe = jax.lax.select(b >= 0, 1.0, a)
+        ζomζ = (ζ := jax.lax.select(b >= 0, c / q, q / a_safe)) * (omζ := 1 - ζ)
 
         x = xlb + ζ * (xrb - xlb)
         ld = (
