@@ -4,9 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bijax"
-version = "0.1.3"
+dynamic  = ["version"]
 requires-python = ">=3.11"
 dependencies = [
+    "beartype>=0.22.9",
     "equinox>=0.12.1",
     "jax>=0.8.0",
 ]
@@ -16,10 +17,14 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=6.0.0",
     "optax>=0.2.4",
+    "pdoc>=16.0.0",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "bijax.__version__"}
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -34,5 +39,11 @@ extraPaths = ["src"]
 extend-exclude = [".#*", "~*"]
 
 [tool.ruff.lint]
-ignore = ["F722", "E741", "E743"]
+select = ["D", "C", "B", "I", "UP", "SIM"]
+ignore = ["F722", "E741", "E743", "D417"]
 
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
