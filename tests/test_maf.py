@@ -41,7 +41,6 @@ def test_araffine_forward_is_autoregressive():
     dim = 4
     m = make_araffine(jr.key(0), dim=dim)
     x = jr.normal(jr.key(3), (dim,))
-    # z_i depends on x_{<=i} only -> forward jacobian is lower triangular.
     J = jax.jacobian(lambda x: m.fwd_logdet(x)[0])(x)
     upper = jnp.triu(jnp.abs(J), k=1)
     assert jnp.all(upper < 1e-6)
@@ -65,6 +64,5 @@ def test_araffine_conditioning_changes_output():
     c2 = jr.normal(jr.key(3), (4,))
     z1, _ = m.fwd_logdet(x, c1)
     z2, _ = m.fwd_logdet(x, c2)
-    # every coordinate, including coordinate 0, must respond to c
     for i in range(dim):
         assert not jnp.allclose(z1[i], z2[i]), f"coordinate {i} ignores c"

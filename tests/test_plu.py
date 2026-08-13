@@ -7,18 +7,9 @@ from jax import random as jr
 
 from bijax.plu import PLU
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def _make_plub(dim: int, seed: int = 0) -> PLU:
     return PLU(dim, rng=jr.key(seed))
-
-
-# ---------------------------------------------------------------------------
-# Roundtrip: forward then inverse recovers input
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("dim", [2, 4, 8])
@@ -39,11 +30,6 @@ def test_plub_roundtrip_inv_fwd(dim):
     assert jnp.allclose(yr, y, atol=1e-5), f"max err={jnp.abs(yr - y).max()}"
 
 
-# ---------------------------------------------------------------------------
-# Forward/inverse log-dets cancel
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("dim", [2, 4, 8])
 def test_plub_logdets_cancel(dim):
     m = _make_plub(dim, seed=30)
@@ -51,11 +37,6 @@ def test_plub_logdets_cancel(dim):
     _, ld_fwd = m.fwd_logdet(x)
     _, ld_inv = m.inv_logdet(m.fwd_logdet(x)[0])
     assert jnp.allclose(ld_fwd + ld_inv, 0.0, atol=1e-6)
-
-
-# ---------------------------------------------------------------------------
-# Log-det matches autodiff (via Jacobian determinant)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("dim", [2, 4])
@@ -68,22 +49,12 @@ def test_plub_logdet_matches_autodiff(dim):
     assert jnp.allclose(ld, expected, atol=1e-5), f"ld={ld}, expected={expected}"
 
 
-# ---------------------------------------------------------------------------
-# Log-det formula check: should equal sum of logs diagonal of U
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("dim", [2, 4, 8])
 def test_plub_logdet_equals_logs_sum(dim):
     m = _make_plub(dim, seed=50)
     x = jr.normal(jr.key(7), (dim,))
     _, ld = m.fwd_logdet(x)
     assert jnp.allclose(ld, m.logs.sum(), atol=1e-6)
-
-
-# ---------------------------------------------------------------------------
-# Determinism: same key gives same output
-# ---------------------------------------------------------------------------
 
 
 def test_plub_determinism():
@@ -96,14 +67,8 @@ def test_plub_determinism():
     assert jnp.allclose(ld1, ld2)
 
 
-# ---------------------------------------------------------------------------
-# Non-trainable structure stays fixed
-# ---------------------------------------------------------------------------
-
-
 def test_plub_permutation_and_signs_get_zero_gradient():
-    # p and signs are array leaves guarded only by stop_gradient; training
-    # must never move them or the layer stops being a permutation
+    # p and signs must stay fixed or the layer stops being a permutation
     import equinox as eqx
 
     m = _make_plub(4)

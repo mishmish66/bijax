@@ -236,7 +236,6 @@ def test_slow_path_gradient_is_finite(direction):
 
 @pytest.mark.parametrize("direction", DIRECTIONS)
 def test_slow_path_logdet_gradient_matches_finite_differences(x64, direction):
-    """Autodiff through the unrolled solve must be exact."""
     dim = 3
     m = make_arspline(jr.key(0), dim=dim, direction=direction)
     x = jr.uniform(jr.key(1), (dim,), minval=-2.0, maxval=2.0)

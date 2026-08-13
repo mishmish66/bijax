@@ -48,7 +48,6 @@ def test_arspline_forward_is_autoregressive():
     dim = 4
     m = make_arspline(jr.key(0), dim=dim)
     x = jr.normal(jr.key(3), (dim,))
-    # z_i depends on x_{<=i} only -> forward jacobian is lower triangular.
     J = jax.jacobian(lambda x: m.fwd_logdet(x)[0])(x)
     upper = jnp.triu(jnp.abs(J), k=1)
     assert jnp.all(upper < 1e-6)
@@ -56,8 +55,6 @@ def test_arspline_forward_is_autoregressive():
 
 
 def test_stacked_arspline_conditions_every_coordinate():
-    # a pure-AR stack (no mixing layers) must not leave p(x_0 | c)
-    # independent of c
     dim = 3
     layers = [make_arspline(jr.key(i), dim=dim, width=32, cond_dim=4) for i in range(3)]
 
@@ -86,8 +83,6 @@ def test_arspline_conditional_roundtrip_and_logdets():
 
 
 def test_arspline_works_under_jit():
-    # the model must be jit-able as a traced argument, the way a training
-    # step receives it
     m = make_arspline(jr.key(0))
     x = jr.normal(jr.key(1), (2,))
     z, ld = eqx.filter_jit(lambda m, x: m.fwd_logdet(x))(m, x)

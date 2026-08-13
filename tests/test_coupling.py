@@ -13,24 +13,14 @@ from jax import random as jr
 
 from bijax.coupling_aff import AffineCoupling
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def _make(flow_dim: int, cond_dim: int = 0, seed: int = 0) -> AffineCoupling:
-    """Build an AffineCoupling using mlp_dims (handles cond_dim == 0 too)."""
     in_dim, out_dim = AffineCoupling.mlp_dims(flow_dim, cond_dim)
     mlp = eqx.nn.MLP(in_dim, out_dim, width_size=32, depth=2, key=jr.key(seed))
-    # even dims are identity (pass-through / MLP input), odd dims transformed
+    # even dims pass through, odd dims are transformed
     id_idxs = tuple(range(0, flow_dim, 2))
     tr_idxs = tuple(range(1, flow_dim, 2))
     return AffineCoupling(mlp=mlp, id_idxs=id_idxs, tr_idxs=tr_idxs)
-
-
-# ---------------------------------------------------------------------------
-# mlp_dims static helper
-# ---------------------------------------------------------------------------
 
 
 def test_mlp_dims_unconditional():
@@ -44,11 +34,6 @@ def test_mlp_dims_conditional_includes_cond():
     in_dim, out_dim = AffineCoupling.mlp_dims(4, 3)
     assert in_dim == 4 // 2 + 3
     assert out_dim == (4 - 4 // 2) * 2
-
-
-# ---------------------------------------------------------------------------
-# Unconditional — roundtrip / log-dets cancel / autodiff / id-dims passthrough
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("flow_dim", [4, 6])
@@ -86,11 +71,6 @@ def test_uncond_id_dims_unchanged(flow_dim):
     y, _ = m.fwd_logdet(x, None)
     id_ix = jnp.array(m.id_idxs)
     assert jnp.allclose(y[id_ix], x[id_ix], atol=1e-6)
-
-
-# ---------------------------------------------------------------------------
-# Conditional — roundtrip / log-dets / autodiff / varies with c
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("flow_dim,cond_dim", [(4, 2), (6, 3)])
@@ -132,15 +112,9 @@ def test_cond_output_varies_with_c(flow_dim, cond_dim):
     c2 = jr.normal(jr.key(19), (cond_dim,))
     y1, _ = m.fwd_logdet(x, c1)
     y2, _ = m.fwd_logdet(x, c2)
-    # transformed dims must differ; identity dims stay the same
     id_ix, tr_ix = jnp.array(m.id_idxs), jnp.array(m.tr_idxs)
     assert not jnp.allclose(y1[tr_ix], y2[tr_ix])
     assert jnp.allclose(y1[id_ix], y2[id_ix])
-
-
-# ---------------------------------------------------------------------------
-# MLP-output-shape validation
-# ---------------------------------------------------------------------------
 
 
 def _make_bad(flow_dim: int = 4, seed: int = 0) -> AffineCoupling:
@@ -162,11 +136,6 @@ def test_inv_rejects_bad_mlp_output():
     m = _make_bad()
     with pytest.raises(ValueError):
         m.inv_logdet(jr.normal(jr.key(1), (4,)), None)
-
-
-# ---------------------------------------------------------------------------
-# jit compatibility
-# ---------------------------------------------------------------------------
 
 
 def test_affine_coupling_works_under_jit():
