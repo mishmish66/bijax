@@ -1,4 +1,4 @@
-"""Autoregressive masked linear / MLP, following MADE.
+r"""Autoregressive masked linear / MLP, following MADE.
 
 @inproceedings{DBLP:conf/nips/BengioB99,
   author       = {Yoshua Bengio and
@@ -46,7 +46,16 @@ from jaxtyping import Array, Float, Int, Key
 
 
 class CausalLinear(eqx.Module):
-    """Masked linear with per-unit autoregressive ranks."""
+    """A linear layer with a configurable dependency structure.
+
+    By zeroing weights relating higher rank inputs to lower rank outputs this
+    linear layer makes outputs depend only on inputs lower ranked than them.
+
+    Examples
+    --------
+    FIXME: Add docs.
+
+    """
 
     w_flat: Float[Array, " n"]
     bias: Float[Array, " out"]
@@ -62,9 +71,9 @@ class CausalLinear(eqx.Module):
         *,
         rng: Key[Array, ""],
     ):
-        """A flexible masked linear layer.
+        """Randomly initialize a `CausalLinear`.
 
-        This layer supports flexible dependencies between inputs and outputs in
+        supports flexible dependencies between inputs and outputs in
         the form of ranks. Each output can depend only on inputs with the same
         or lower rank. This also means that for lower ranking outputs the
         effective number of parameters involved in the computation is quite low.
