@@ -22,9 +22,13 @@ CASE = pytest.mark.parametrize(
     ("n_bins", "bounds", "scale"), CASES, ids=[f"bins{n}" for n, _, _ in CASES]
 )
 SHAPE = pytest.mark.parametrize(  # for tests where the parameter scale is irrelevant
-    ("n_bins", "bounds"), [(n, b) for n, b, _ in CASES], ids=[f"bins{n}" for n, _, _ in CASES]
+    ("n_bins", "bounds"),
+    [(n, b) for n, b, _ in CASES],
+    ids=[f"bins{n}" for n, _, _ in CASES],
 )
-BOTH = pytest.mark.parametrize("transform", [spline_fwd, spline_inv], ids=["fwd", "inv"])
+BOTH = pytest.mark.parametrize(
+    "transform", [spline_fwd, spline_inv], ids=["fwd", "inv"]
+)
 MIN_SLOPE = 1e-3  # what tests that decode directly, but do not probe the slope, use
 
 
@@ -76,7 +80,9 @@ def _short_table_spline(n_bins, bounds, shortfall=1e-5):
 @BOTH
 def test_maps_the_range_onto_itself_monotonically(n_bins, bounds, scale, transform):
     for seed in range(4):
-        out, ld = _sweep(transform, _grid(257, bounds), _params(seed, n_bins, scale), bounds)
+        out, ld = _sweep(
+            transform, _grid(257, bounds), _params(seed, n_bins, scale), bounds
+        )
         assert _finite((out, ld))
         assert jnp.allclose(out[0], bounds[0], atol=1e-5 * _span(bounds))
         assert jnp.allclose(out[-1], bounds[1], atol=1e-5 * _span(bounds))
@@ -120,7 +126,12 @@ def test_outside_the_range_is_the_identity_with_frozen_gradients(
 ):
     p = _params(3, n_bins, 10.0 * scale)
     span = _span(bounds)
-    for x in (bounds[0] - 1e-3 * span, bounds[0] - span, bounds[1] + 1e-3 * span, bounds[1] + span):
+    for x in (
+        bounds[0] - 1e-3 * span,
+        bounds[0] - span,
+        bounds[1] + 1e-3 * span,
+        bounds[1] + span,
+    ):
         x = jnp.array(x)
         out, ld = transform(x, p, *bounds)
         assert out == x
@@ -132,7 +143,8 @@ def test_outside_the_range_is_the_identity_with_frozen_gradients(
 
 @pytest.mark.parametrize(
     ("n_params", "min_slope"),
-    [(n, 1e-3) for n in (0, 1, 3, 4, 6, 9, 10)] + [(11, s) for s in (0.0, 1.0, -0.5, 2.0)],
+    [(n, 1e-3) for n in (0, 1, 3, 4, 6, 9, 10)]
+    + [(11, s) for s in (0.0, 1.0, -0.5, 2.0)],
 )
 def test_rejects_invalid_params(n_params, min_slope):
     with pytest.raises(ValueError):
@@ -168,7 +180,10 @@ def test_param_slots_map_to_widths_heights_and_derivatives(n_bins, bounds, scale
 
     def shift(slot):
         moved = RQS.decode(p.at[slot].add(5.0), MIN_SLOPE, bounds[0], bounds[1])
-        return [float(jnp.max(jnp.abs(a - b))) for a, b in zip(moved.bounds(), knots, strict=True)]
+        return [
+            float(jnp.max(jnp.abs(a - b)))
+            for a, b in zip(moved.bounds(), knots, strict=True)
+        ]
 
     dx_from_width, dy_from_width = shift(0)
     dx_from_height, dy_from_height = shift(1)
@@ -192,7 +207,9 @@ def test_jit_and_vmap_agree_with_the_unbatched_call(transform):
     n_bins, bounds = 8, (-5.0, 5.0)
     p = jnp.stack([_params(s, n_bins, 1.0) for s in range(4)])
     x = _grid(4, (-6.0, 6.0))
-    batched = jax.jit(jax.vmap(transform, in_axes=(0, 0, None, None)), static_argnums=(2, 3))
+    batched = jax.jit(
+        jax.vmap(transform, in_axes=(0, 0, None, None)), static_argnums=(2, 3)
+    )
     got = batched(x, p, *bounds)
     want = [transform(x[i], p[i], *bounds) for i in range(4)]
     for g, w in zip(got, zip(*want, strict=True), strict=True):
@@ -222,17 +239,23 @@ def test_gradients_are_finite_exactly_on_the_knots(n_bins, bounds, scale, transf
 
 @CASE
 @BOTH
-def test_values_and_gradients_are_finite_for_extreme_params(n_bins, bounds, scale, transform):
+def test_values_and_gradients_are_finite_for_extreme_params(
+    n_bins, bounds, scale, transform
+):
     p = _params(11, n_bins, 50.0 * scale)
     span = _span(bounds)
     x = _grid(401, (bounds[0] - span, bounds[1] + span))
     assert _finite(_sweep(transform, x, p, bounds))
-    assert _finite(jax.vmap(_grads, in_axes=(None, 0, None, None))(transform, x, p, bounds))
+    assert _finite(
+        jax.vmap(_grads, in_axes=(None, 0, None, None))(transform, x, p, bounds)
+    )
 
 
 @pytest.mark.parametrize("n_bins", [n for n, _, _ in CASES])
 def test_inverse_gradients_are_finite_when_a_bin_is_linear(n_bins):
-    assert _finite(_grads(spline_inv, jnp.array(0.25), jnp.zeros(3 * n_bins - 1), (-5.0, 5.0)))
+    assert _finite(
+        _grads(spline_inv, jnp.array(0.25), jnp.zeros(3 * n_bins - 1), (-5.0, 5.0))
+    )
 
 
 @SHAPE
@@ -242,7 +265,11 @@ def test_finite_and_near_identity_in_the_sliver_above_the_last_knot(n_bins, boun
     top = float(spline.bounds()[0][-1])
     assert top < bounds[1], "bin table must stop short of the upper bound"
     upper = jnp.float32(bounds[1])
-    x = jnp.nextafter(upper, jnp.float32(0.0)) if at == "ulp_below_upper" else (top + upper) / 2
+    x = (
+        jnp.nextafter(upper, jnp.float32(0.0))
+        if at == "ulp_below_upper"
+        else (top + upper) / 2
+    )
     for name in ("fwd_logdydx", "inv_logdxdy"):
         evaluate = getattr(type(spline), name)
         out, ld = evaluate(spline, x)
