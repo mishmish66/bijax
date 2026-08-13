@@ -1,8 +1,11 @@
-"""Mini Flows: a tiny equinox-only library of neural bijections.
+"""Bijax: a tiny equinox-only library of neural bijections.
 
-Each bijector exposes an ``fwd_logdet``/``inv_logdet`` interface and is meant to
-be combined with a base density to define a flow model.
+Each bijector exposes an ``fwd_logdet``/``inv_logdet`` interface and can be
+combined with a base density to define a flow model.
 """
+
+__version__ = "0.1.3"
+__docformat__ = "numpy"
 
 from .causal_mlp import CausalLinear, CausalMLP
 from .coupling_aff import AffineCoupling
@@ -10,14 +13,7 @@ from .coupling_nsf import SplineCoupling
 from .maf import ARAffine
 from .mansf import ARSpline
 from .plu import PLU
-from .spline import (
-    RationalQuadratic,
-    RationalQuadraticSpline,
-    spline_fwd,
-    spline_inv,
-)
-
-__version__ = "0.1.1"
+from .spline import spline_fwd, spline_inv
 
 __all__ = [
     # supporting characters
@@ -30,8 +26,6 @@ __all__ = [
     "ARAffine",
     "ARSpline",
     # spline primitives
-    "RationalQuadratic",
-    "RationalQuadraticSpline",
     "spline_fwd",
     "spline_inv",
 ]

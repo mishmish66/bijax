@@ -34,7 +34,7 @@ from bijax.spline import spline_fwd, spline_inv
 
 
 class ARSpline(eqx.Module):
-    """Masked-autoregressive RQ spline layer"""
+    """Masked-autoregressive RQ spline layer."""
 
     net: CausalMLP
     low: float = eqx.field(static=True, default=-5.0)
@@ -43,6 +43,30 @@ class ARSpline(eqx.Module):
     direction: Literal["maf"] | Literal["iaf"] = eqx.field(static=True, default="maf")
 
     def fwd_logdet(self, x: Float[Array, " d"], c: Float[Array, " c"] | None = None):
+        r"""Apply the mapping represented by this `ARSpline` and get the log determinant.
+
+        Computes the inverse of the bijection represented by this
+        `ARSpline` along with the log jacobian determinant
+        \\(\log\left|\frac{\partial f(x)}{\partial x}\right|\\) for downstream flows to use
+        it in the change of variables formula.
+
+        Parameters
+        ----------
+        x : Float[Array, " d"]
+            The value to map.
+        c : Float[Array, " c"], optional
+            Conditioning data for the neural network.
+
+        Raises
+        ------
+        ValueError
+            Raises when direction is is invalid
+
+        Examples
+        --------
+        FIXME: Add docs.
+
+        """
         if self.direction == "maf":
             return self._slow(x, c)
         if self.direction == "iaf":
@@ -51,6 +75,30 @@ class ARSpline(eqx.Module):
         raise ValueError(msg)
 
     def inv_logdet(self, y: Float[Array, " d"], c: Float[Array, " c"] | None = None):
+        r"""Invert the mapping represented by this `ARSpline` and get the log determinant.
+
+        Computes the inverse of the bijection represented by this
+        `ARSpline` along with the log jacobian determinant
+        \\(\log\left|\frac{\partial f^{-1}(y)}{\partial y}\right|\\) for downstream flows to use
+        it in the change of variables formula.
+
+        Parameters
+        ----------
+        y : Float[Array, " d"]
+            The value to map.
+        c : Float[Array, " c"], optional
+            Conditioning data for the neural network.
+
+        Raises
+        ------
+        ValueError
+            Raises when direction is is invalid
+
+        Examples
+        --------
+        FIXME: Add docs.
+
+        """
         if self.direction == "maf":
             return self._fast(y, c)
         if self.direction == "iaf":
@@ -63,8 +111,8 @@ class ARSpline(eqx.Module):
         outp, ld = jax.vmap(spline_fwd, in_axes=(0, 0, None, None, None))(
             inp,
             params,
-            jnp.array(self.low),
-            jnp.array(self.high),
+            self.low,
+            self.high,
             self.min_slope,
         )
         return outp, ld.sum()
@@ -76,8 +124,8 @@ class ARSpline(eqx.Module):
             outp_i, _ = spline_inv(
                 inp[i],
                 params[i],
-                jnp.array(self.low),
-                jnp.array(self.high),
+                self.low,
+                self.high,
                 self.min_slope,
             )
             outp = outp.at[i].set(outp_i)
@@ -86,8 +134,8 @@ class ARSpline(eqx.Module):
         _, ld = jax.vmap(spline_fwd, in_axes=(0, 0, None, None, None))(
             outp,
             params,
-            jnp.array(self.low),
-            jnp.array(self.high),
+            self.low,
+            self.high,
             self.min_slope,
         )
         return outp, -ld.sum()
