@@ -13,14 +13,16 @@
 
 import equinox as eqx
 import jax
+from beartype import beartype
 from jax import numpy as jnp
-from jaxtyping import Array, Float
+from jaxtyping import Array, Float, jaxtyped
 
 from bijax.spline import spline_fwd, spline_inv
 
 
+@jaxtyped(typechecker=beartype)
 class SplineCoupling(eqx.Module):
-    """One RQ-spline coupling layer"""
+    """One RQ-spline coupling layer."""
 
     mlp: eqx.nn.MLP
     id_idxs: tuple[int, ...] = eqx.field(static=True)
@@ -55,7 +57,7 @@ class SplineCoupling(eqx.Module):
         params = mlp_out.reshape(tform_dim, -1)
         for_tform = x[tr_ix]
         tformed, ld = jax.vmap(spline_fwd, in_axes=(0, 0, None, None))(
-            for_tform, params, jnp.array(self.low), jnp.array(self.high)
+            for_tform, params, self.low, self.high
         )
         return x.at[tr_ix].set(tformed), ld
 
@@ -76,7 +78,7 @@ class SplineCoupling(eqx.Module):
         params = mlp_out.reshape(tform_dim, -1)
         for_tform = z[tr_ix]
         tformed, ld = jax.vmap(spline_inv, in_axes=(0, 0, None, None))(
-            for_tform, params, jnp.array(self.low), jnp.array(self.high)
+            for_tform, params, self.low, self.high
         )
 
         return z.at[tr_ix].set(tformed), ld
