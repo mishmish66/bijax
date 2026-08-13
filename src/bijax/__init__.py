@@ -4,7 +4,7 @@ Each bijector exposes an ``fwd_logdet``/``inv_logdet`` interface and can be
 combined with a base density to define a flow model.
 """
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 __docformat__ = "numpy"
 
 from .causal_mlp import CausalLinear, CausalMLP
