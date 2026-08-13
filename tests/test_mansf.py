@@ -2,7 +2,8 @@
 
 import equinox as eqx
 import jax
-from jax import numpy as jnp, random as jr
+from jax import numpy as jnp
+from jax import random as jr
 
 from bijax.causal_mlp import CausalMLP
 from bijax.mansf import ARSpline

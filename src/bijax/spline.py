@@ -11,11 +11,10 @@
 }
 """
 
-from jaxtyping import Float, Array
-
+import equinox as eqx
 import jax
 from jax import numpy as jnp
-import equinox as eqx
+from jaxtyping import Array, Float
 
 
 class RationalQuadratic(eqx.Module):

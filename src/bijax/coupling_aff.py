@@ -10,10 +10,9 @@
 }
 """
 
-from jax import numpy as jnp
-
 import equinox as eqx
-from jaxtyping import Float, Array
+from jax import numpy as jnp
+from jaxtyping import Array, Float
 
 
 class AffineCoupling(eqx.Module):

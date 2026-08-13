@@ -12,10 +12,9 @@
 }
 """
 
-from jaxtyping import Float, Array
-
-from jax import numpy as jnp
 import equinox as eqx
+from jax import numpy as jnp
+from jaxtyping import Array, Float
 
 from bijax.causal_mlp import CausalMLP
 

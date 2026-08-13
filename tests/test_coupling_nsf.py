@@ -1,9 +1,10 @@
 """Tests for the RQ-spline coupling layer (SplineCoupling)."""
 
-import jax
-from jax import numpy as jnp, random as jr
 import equinox as eqx
+import jax
 import pytest
+from jax import numpy as jnp
+from jax import random as jr
 
 from bijax.coupling_nsf import SplineCoupling
 

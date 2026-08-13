@@ -4,11 +4,12 @@ Maximum-likelihood training should drive the mean negative log-likelihood well
 below the standard-Gaussian baseline (~2.84 nats on the standardised data).
 """
 
-import jax
-from jax import numpy as jnp, random as jr
-from jax.scipy.stats import norm
 import equinox as eqx
+import jax
 import optax
+from jax import numpy as jnp
+from jax import random as jr
+from jax.scipy.stats import norm
 
 from bijax.causal_mlp import CausalMLP
 from bijax.mansf import ARSpline

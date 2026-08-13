@@ -35,15 +35,14 @@
 """
 
 from collections.abc import Callable
-from typing import Literal, overload
 from itertools import pairwise
-
-from jax import numpy as jnp
-import jax
-from jax import random as jr
+from typing import Literal, overload
 
 import equinox as eqx
-from jaxtyping import Float, Array, Key, Int
+import jax
+from jax import numpy as jnp
+from jax import random as jr
+from jaxtyping import Array, Float, Int, Key
 
 
 class CausalLinear(eqx.Module):

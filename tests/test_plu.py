@@ -1,11 +1,11 @@
 """Tests for the PLU-decomposed invertible linear bijector (PLUB)."""
 
 import jax
-from jax import numpy as jnp, random as jr
 import pytest
+from jax import numpy as jnp
+from jax import random as jr
 
 from bijax.plu import PLU
-
 
 # ---------------------------------------------------------------------------
 # Helpers

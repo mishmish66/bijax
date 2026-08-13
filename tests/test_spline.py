@@ -1,8 +1,9 @@
 """Tests for the rational-quadratic spline primitives."""
 
 import jax
-from jax import numpy as jnp, random as jr
 import pytest
+from jax import numpy as jnp
+from jax import random as jr
 
 from bijax.spline import RationalQuadratic, RationalQuadraticSpline, spline_fwd
 

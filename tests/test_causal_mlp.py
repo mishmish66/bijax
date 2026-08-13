@@ -1,8 +1,9 @@
 """Tests for the masked autoregressive CausalLinear / CausalMLP."""
 
 import jax
-from jax import numpy as jnp, random as jr
 import pytest
+from jax import numpy as jnp
+from jax import random as jr
 
 from bijax.causal_mlp import CausalLinear, CausalMLP
 

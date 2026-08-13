@@ -11,11 +11,10 @@
 }
 """
 
+import equinox as eqx
 import jax
 from jax import numpy as jnp
-
-import equinox as eqx
-from jaxtyping import Float, Array
+from jaxtyping import Array, Float
 
 from bijax.spline import spline_fwd, spline_inv
 

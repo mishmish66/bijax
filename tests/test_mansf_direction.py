@@ -7,7 +7,8 @@
 import equinox as eqx
 import jax
 import pytest
-from jax import numpy as jnp, random as jr
+from jax import numpy as jnp
+from jax import random as jr
 from jax.flatten_util import ravel_pytree
 
 from bijax.causal_mlp import CausalMLP

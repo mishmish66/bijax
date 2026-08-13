@@ -1,7 +1,8 @@
 """Tests for the masked-autoregressive affine flow (ARAffine)"""
 
 import jax
-from jax import numpy as jnp, random as jr
+from jax import numpy as jnp
+from jax import random as jr
 
 from bijax.causal_mlp import CausalMLP
 from bijax.maf import ARAffine

@@ -11,13 +11,12 @@
 }
 """
 
+import equinox as eqx
 from jax import numpy as jnp
 from jax import random as jr
 from jax.lax import stop_gradient as sg
 from jax.scipy import linalg as jla
-
-import equinox as eqx
-from jaxtyping import Float, Array, Key
+from jaxtyping import Array, Float, Key
 
 
 class PLU(eqx.Module):

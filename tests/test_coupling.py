@@ -5,13 +5,13 @@ RQ-spline `SplineCoupling`.  `s` is a log-scale, so the forward applies
 `x -> x * exp(s) + t` on the transformed dims with log-det `s.sum()`.
 """
 
-import jax
-from jax import numpy as jnp, random as jr
 import equinox as eqx
+import jax
 import pytest
+from jax import numpy as jnp
+from jax import random as jr
 
 from bijax.coupling_aff import AffineCoupling
-
 
 # ---------------------------------------------------------------------------
 # Helpers
