@@ -30,7 +30,7 @@ from jax import numpy as jnp
 from jaxtyping import Array, Float
 
 from bijax.causal_mlp import CausalMLP
-from bijax.spline import spline_fwd, spline_inv
+from bijax.rational_quadratic_spline import rqs_fwd, rqs_inv
 
 
 class ARSpline(eqx.Module):
@@ -39,7 +39,7 @@ class ARSpline(eqx.Module):
     net: CausalMLP
     low: float = eqx.field(static=True, default=-5.0)
     high: float = eqx.field(static=True, default=5.0)
-    min_slope: float = eqx.field(static=True, default=1e-3)
+    min_slope: float | None = eqx.field(static=True, default=1e-3)
     direction: Literal["maf"] | Literal["iaf"] = eqx.field(static=True, default="maf")
 
     def fwd_logdet(self, x: Float[Array, " d"], c: Float[Array, " c"] | None = None):
@@ -108,7 +108,7 @@ class ARSpline(eqx.Module):
 
     def _fast(self, inp: Float[Array, " d"], c: Float[Array, " c"] | None = None):
         params = self.net(inp, c)  # (dim,) scalar-per-row -> (dim, n_params)
-        outp, ld = jax.vmap(spline_fwd, in_axes=(0, 0, None, None, None))(
+        outp, ld = jax.vmap(rqs_fwd, in_axes=(0, 0, None, None, None))(
             inp,
             params,
             self.low,
@@ -121,7 +121,7 @@ class ARSpline(eqx.Module):
         outp = jnp.zeros(self.net.num_ranks)
         for i in range(self.net.num_ranks):
             params = self.net(outp, c)  # (dim, n_params)
-            outp_i, _ = spline_inv(
+            outp_i, _ = rqs_inv(
                 inp[i],
                 params[i],
                 self.low,
@@ -131,7 +131,7 @@ class ARSpline(eqx.Module):
             outp = outp.at[i].set(outp_i)
         # log-det of the inverse is minus that of the forward at the solved x
         params = self.net(outp, c)
-        _, ld = jax.vmap(spline_fwd, in_axes=(0, 0, None, None, None))(
+        _, ld = jax.vmap(rqs_fwd, in_axes=(0, 0, None, None, None))(
             outp,
             params,
             self.low,

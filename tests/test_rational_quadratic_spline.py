@@ -5,8 +5,8 @@ import pytest
 from jax import numpy as jnp
 from jax import random as jr
 
-from bijax.spline import _RationalQuadraticSpline as RQS
-from bijax.spline import spline_fwd, spline_inv
+from bijax.rational_quadratic_spline import _RQSpline as RQS
+from bijax.rational_quadratic_spline import spline_fwd, spline_inf
 
 # A diagonal through (bin count x range x parameter scale), not the full cross product:
 # the axes are independent, so one representative combination each is enough.
@@ -64,11 +64,11 @@ def _grads(transform, x, p, bounds):
 
 def _short_table_spline(n_bins, bounds, shortfall=1e-5):
     """Spline whose bin sizes sum to just under one, leaving a sliver below ``upper``."""
-    log_sizes = jnp.log(jnp.full((n_bins,), (1.0 - shortfall) / n_bins))
+    sizes = jnp.full((n_bins,), (1.0 - shortfall) / n_bins)
     log_d = jnp.linspace(-1.0, 1.0, n_bins + 1)
     return RQS(
-        log_k_ws=log_sizes,
-        log_k_hs=log_sizes,
+        k_ws=sizes,
+        k_hs=sizes,
         log_k_dls=log_d[:-1],
         log_k_drs=log_d[1:],
         lower=bounds[0],
@@ -162,7 +162,7 @@ def test_decoded_bins_partition_the_range_without_degeneracy(
         lower=bounds[0],
         upper=bounds[1],
     )
-    for sizes in (jnp.exp(spline.log_k_ws), jnp.exp(spline.log_k_hs)):
+    for sizes in (spline.k_ws, spline.k_hs):
         assert jnp.allclose(sizes.sum(), 1.0, atol=1e-5)
         assert jnp.all(sizes >= min_slope / n_bins)
     for knots in spline.bounds():

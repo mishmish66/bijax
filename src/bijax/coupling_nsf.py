@@ -17,7 +17,7 @@ from beartype import beartype
 from jax import numpy as jnp
 from jaxtyping import Array, Float, jaxtyped
 
-from bijax.spline import spline_fwd, spline_inv
+from bijax.rational_quadratic_spline import rqs_fwd, rqs_inv
 
 
 @jaxtyped(typechecker=beartype)
@@ -42,11 +42,7 @@ class SplineCoupling(eqx.Module):
     def fwd_logdet(self, x: Float[Array, " d"], c: Float[Array, " c"] | None):
         id_ix, tr_ix = jnp.array(self.id_idxs), jnp.array(self.tr_idxs)
         tform_dim = len(self.tr_idxs)
-        if c is None:
-            h = x[id_ix]
-        else:
-            h = jnp.concat([x[id_ix], c])
-
+        h = x[id_ix] if c is None else jnp.concat([x[id_ix], c])
         mlp_out = self.mlp(h)
 
         param_dim = tform_dim * (self.n_bins * 3 - 1)
@@ -56,7 +52,7 @@ class SplineCoupling(eqx.Module):
 
         params = mlp_out.reshape(tform_dim, -1)
         for_tform = x[tr_ix]
-        tformed, ld = jax.vmap(spline_fwd, in_axes=(0, 0, None, None))(
+        tformed, ld = jax.vmap(rqs_fwd, in_axes=(0, 0, None, None))(
             for_tform, params, self.low, self.high
         )
         return x.at[tr_ix].set(tformed), ld
@@ -64,10 +60,7 @@ class SplineCoupling(eqx.Module):
     def inv_logdet(self, z: Float[Array, " d"], c: Float[Array, " c"] | None):
         id_ix, tr_ix = jnp.array(self.id_idxs), jnp.array(self.tr_idxs)
         tform_dim = len(self.tr_idxs)
-        if c is None:
-            h = z[id_ix]
-        else:
-            h = jnp.concat([z[id_ix], c])
+        h = z[id_ix] if c is None else jnp.concat([z[id_ix], c])
         mlp_out = self.mlp(h)
 
         param_dim = tform_dim * (self.n_bins * 3 - 1)
@@ -77,7 +70,7 @@ class SplineCoupling(eqx.Module):
 
         params = mlp_out.reshape(tform_dim, -1)
         for_tform = z[tr_ix]
-        tformed, ld = jax.vmap(spline_inv, in_axes=(0, 0, None, None))(
+        tformed, ld = jax.vmap(rqs_inv, in_axes=(0, 0, None, None))(
             for_tform, params, self.low, self.high
         )
 

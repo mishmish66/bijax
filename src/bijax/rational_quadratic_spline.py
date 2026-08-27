@@ -19,9 +19,11 @@ from jaxtyping import Array, Float, jaxtyped
 
 
 @jaxtyped(typechecker=beartype)
-class _RationalQuadraticSpline(eqx.Module):
-    log_k_ws: Float[Array, " k"]
-    log_k_hs: Float[Array, " k"]
+class _RQSpline(eqx.Module):
+    """Rational Quadratic Spline."""
+
+    k_ws: Float[Array, " k"]
+    k_hs: Float[Array, " k"]
     log_k_dls: Float[Array, " k"]
     log_k_drs: Float[Array, " k"]
     lower: float = eqx.field(static=True)
@@ -30,33 +32,37 @@ class _RationalQuadraticSpline(eqx.Module):
     @staticmethod
     def decode(
         p: Float[Array, " p"],
-        min_slope: float,
+        min_slope: float | None,
         lower: float,
         upper: float,
-    ) -> "_RationalQuadraticSpline":
+    ) -> "_RQSpline":
         if len(p) % 3 != 2:
             msg = (
                 f"param length must be 3*B - 1 for B bins, got {len(p)}; "
                 "layout is B widths, B heights, B-1 interior derivatives"
             )
             raise ValueError(msg)
-        if not 0.0 < min_slope < 1.0:
+        if min_slope is not None and not 0.0 < min_slope < 1.0:
             msg = f"min_slope must be in (0, 1), got {min_slope}"
             raise ValueError(msg)
 
         raw_ws, raw_hs, raw_ds = p[::3], p[1::3], p[2::3]
-        log_ds = raw_ds / (1.0 + jnp.abs(raw_ds / jnp.log(min_slope)))
+        if min_slope is not None:
+            log_ds = raw_ds / (1.0 + jnp.abs(raw_ds / jnp.log(min_slope)))
+            safe_ws = raw_ws / (1.0 + jnp.abs(2 * raw_ws / jnp.log(min_slope)))
+            safe_hs = raw_hs / (1.0 + jnp.abs(2 * raw_hs / jnp.log(min_slope)))
+            wf = jax.nn.softmax(safe_ws)
+            hf = jax.nn.softmax(safe_hs)
+        else:
+            log_ds = raw_ds
+            wf = jax.nn.softmax(raw_ws)
+            hf = jax.nn.softmax(raw_hs)
 
-        safe_ws = raw_ws / (1.0 + jnp.abs(2 * raw_ws / jnp.log(min_slope)))
-        safe_hs = raw_hs / (1.0 + jnp.abs(2 * raw_hs / jnp.log(min_slope)))
-
-        log_wf = jax.nn.log_softmax(safe_ws)
-        log_hf = jax.nn.log_softmax(safe_hs)
         log_ds = jnp.concat([jnp.zeros((1,)), log_ds, jnp.zeros((1,))])
 
-        return _RationalQuadraticSpline(
-            log_k_ws=log_wf,
-            log_k_hs=log_hf,
+        return _RQSpline(
+            k_ws=wf,
+            k_hs=hf,
             log_k_dls=log_ds[:-1],
             log_k_drs=log_ds[1:],
             lower=lower,
@@ -66,7 +72,7 @@ class _RationalQuadraticSpline(eqx.Module):
     def fwd_logdydx(
         self, x: Float[Array, ""]
     ) -> tuple[Float[Array, ""], Float[Array, ""]]:
-        n = self.log_k_ws.shape[0]
+        n = self.k_ws.shape[0]
         bin_x_bounds, bin_y_bounds = self.bounds()
         ku = (
             jnp.searchsorted(bin_x_bounds, x, side="right") - 1
@@ -79,9 +85,7 @@ class _RationalQuadraticSpline(eqx.Module):
 
         xlb, xrb = bin_x_bounds[k], bin_x_bounds[k + 1]
         ylb, yrb = bin_y_bounds[k], bin_y_bounds[k + 1]
-        # log_s and s may disagree. s went through cumsum and log_s didn't.
-        # preserving log_s makes the slope math stay in log space
-        log_s, s = self.log_k_hs[k] - self.log_k_ws[k], (yrb - ylb) / (xrb - xlb)
+        s = (yrb - ylb) / (xrb - xlb)
         log_dl, log_dr = self.log_k_dls[k], self.log_k_drs[k]
         dl, dr = jnp.exp(log_dl), jnp.exp(log_dr)
         ζomζ = (ζ := (x - xlb) / (xrb - xlb)) * (omζ := (xrb - x) / (xrb - xlb))
@@ -89,7 +93,7 @@ class _RationalQuadraticSpline(eqx.Module):
         den = s + (dl + dr - 2 * s) * ζomζ
         y = ylb + (yrb - ylb) * ((s * ζ**2 + dl * ζomζ) / den)  # eq 19
         ld = (  # eq 22
-            2 * log_s
+            2 * jnp.log(s)
             + jnp.log(dr * ζ**2 + 2 * s * ζomζ + dl * omζ**2)
             - 2 * jnp.log(den)
         )
@@ -101,12 +105,12 @@ class _RationalQuadraticSpline(eqx.Module):
 
     def bounds(self) -> tuple[Float[Array, " k"], Float[Array, " k"]]:
         span = self.upper - self.lower
-        bin_x_01 = jnp.concat([jnp.zeros(1), jnp.cumsum(jnp.exp(self.log_k_ws))])
-        bin_y_01 = jnp.concat([jnp.zeros(1), jnp.cumsum(jnp.exp(self.log_k_hs))])
+        bin_x_01 = jnp.concat([jnp.zeros(1), jnp.cumsum(self.k_ws)])
+        bin_y_01 = jnp.concat([jnp.zeros(1), jnp.cumsum(self.k_hs)])
         return bin_x_01 * span + self.lower, bin_y_01 * span + self.lower
 
     def inv_logdxdy(self, y: Float[Array, ""]):
-        n = self.log_k_hs.shape[0]
+        n = self.k_hs.shape[0]
         bin_x_bounds, bin_y_bounds = self.bounds()
         ku = jnp.searchsorted(bin_y_bounds, y, side="right") - 1
 
@@ -118,9 +122,7 @@ class _RationalQuadraticSpline(eqx.Module):
         log_dl, log_dr = self.log_k_dls[k], self.log_k_drs[k]
         xlb, xrb = bin_x_bounds[k], bin_x_bounds[k + 1]
         ylb, yrb = bin_y_bounds[k], bin_y_bounds[k + 1]
-        # log_s and s may disagree. s went through cumsum and log_s didn't.
-        # preserving log_s makes the slope math stay in log space
-        log_s, s = self.log_k_hs[k] - self.log_k_ws[k], (yrb - ylb) / (xrb - xlb)
+        s = (yrb - ylb) / (xrb - xlb)
         dl, dr = jnp.exp(log_dl), jnp.exp(log_dr)
 
         # eqs 29, 30, 31, 32
@@ -137,7 +139,7 @@ class _RationalQuadraticSpline(eqx.Module):
 
         x = xlb + ζ * (xrb - xlb)
         ld = (
-            -2 * log_s
+            -2 * jnp.log(s)
             - jnp.log(dr * ζ**2 + 2 * s * ζomζ + dl * omζ**2)
             + 2 * jnp.log(s + (dl + dr - 2 * s) * ζomζ)
         )
@@ -147,20 +149,20 @@ class _RationalQuadraticSpline(eqx.Module):
         return x, ld
 
 
-def spline_fwd(
+def rqs_fwd(
     x: Float[Array, ""],
     params: Float[Array, " p"],
     lower: float = -5.0,
     upper: float = 5.0,
-    min_slope: float = 1e-3,
+    min_slope: float | None = 1e-3,
 ) -> tuple[Float[Array, ""], Float[Array, ""]]:
     """Evaluate rational quadratic spline.
 
-    Rational quadratic splines from Durkan et al. are a parametric
-    constant time invertible transform from R to R with desirable
-    stability properties. Params is a block of parameters designed for
-    a neural network to output, they are mostly in log space and every
-    real set of parameters will generate a valid spline.
+    Rational quadratic splines from Durkan et al. are a parametric constant time
+    invertible transform from R to R with desirable stability properties. Params
+    is a block of parameters designed for a neural network to output, they are
+    mostly in log space and every (with reasonable min-slope) real set of
+    parameters will generate a valid spline.
 
     Parameters
     ----------
@@ -172,9 +174,8 @@ def spline_fwd(
         Lower limit of spline beyond which the transform is linear
     upper : float
         Upper bound of spline beyond which the transform is linear
-    min_slope : float
-        a slope constraint for the slope parameters to keep them
-        valid.
+    min_slope : float | None
+        a slope constraint for the slope parameters to keep them valid.
 
     Returns
     -------
@@ -186,26 +187,24 @@ def spline_fwd(
     FIXME: Add docs.
 
     """
-    spline = _RationalQuadraticSpline.decode(
-        params, min_slope=min_slope, lower=lower, upper=upper
-    )
+    spline = _RQSpline.decode(params, min_slope=min_slope, lower=lower, upper=upper)
     return spline.fwd_logdydx(x)
 
 
-def spline_inv(
+def rqs_inv(
     y: Float[Array, ""],
     params: Float[Array, " p"],
     lower: float = -5.0,
     upper: float = 5.0,
-    min_slope: float = 1e-3,
+    min_slope: float | None = 1e-3,
 ) -> tuple[Float[Array, ""], Float[Array, ""]]:
     """Invert rational quadratic spline.
 
-    Rational quadratic splines from Durkan et al. are a parametric
-    constant time invertible transform from R to R with desirable
-    stability properties. Params is a block of parameters designed for
-    a neural network to output, they are mostly in log space and every
-    real set of parameters will generate a valid spline.
+    Rational quadratic splines from Durkan et al. are a parametric constant time
+    invertible transform from R to R with desirable stability properties. Params
+    is a block of parameters designed for a neural network to output, they are
+    mostly in log space and every real set of parameters (with reasonable
+    min-slope) will generate a valid spline.
 
     Parameters
     ----------
@@ -217,9 +216,8 @@ def spline_inv(
         Lower limit of spline beyond which the transform is linear
     upper : float
         Upper bound of spline beyond which the transform is linear
-    min_slope : float
-        a slope constraint for the slope parameters to keep them
-        valid.
+    min_slope : float | None
+        a slope constraint for the slope parameters to keep them valid.
 
     Returns
     -------
@@ -231,7 +229,5 @@ def spline_inv(
     FIXME: Add docs.
 
     """
-    spline = _RationalQuadraticSpline.decode(
-        params, min_slope=min_slope, lower=lower, upper=upper
-    )
+    spline = _RQSpline.decode(params, min_slope=min_slope, lower=lower, upper=upper)
     return spline.inv_logdxdy(y)

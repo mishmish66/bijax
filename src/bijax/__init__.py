@@ -13,7 +13,7 @@ from .coupling_nsf import SplineCoupling
 from .maf import ARAffine
 from .mansf import ARSpline
 from .plu import PLU
-from .spline import spline_fwd, spline_inv
+from .rational_quadratic_spline import rqs_fwd, rqs_inv
 
 __all__ = [
     # supporting characters
@@ -26,6 +26,6 @@ __all__ = [
     "ARAffine",
     "ARSpline",
     # spline primitives
-    "spline_fwd",
-    "spline_inv",
+    "rqs_fwd",
+    "rqs_inv",
 ]
