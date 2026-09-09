@@ -27,12 +27,12 @@ class _RQSpline(eqx.Module):
     log_k_dls: Float[Array, " k"]
     log_k_drs: Float[Array, " k"]
     lower: float = eqx.field(static=True)
-    upper: float = eqx.field(static=True)
 
     @staticmethod
     def decode(
         p: Float[Array, " p"],
-        min_slope: float | None,
+        min_bin_size: float,
+        min_knot_slope: float,
         lower: float,
         upper: float,
     ) -> "_RQSpline":
@@ -42,23 +42,34 @@ class _RQSpline(eqx.Module):
                 "layout is B widths, B heights, B-1 interior derivatives"
             )
             raise ValueError(msg)
-        if min_slope is not None and not 0.0 < min_slope < 1.0:
-            msg = f"min_slope must be in (0, 1), got {min_slope}"
+        if not 0.0 < min_knot_slope < 1.0:
+            msg = f"min_knot_slope must be in (0, 1), got {min_knot_slope}"
+            raise ValueError(msg)
+        if not 0.0 < min_bin_size < 1.0:
+            msg = f"min_bin_size must be in (0, 1), got {min_bin_size}"
             raise ValueError(msg)
 
-        raw_ws, raw_hs, raw_ds = p[::3], p[1::3], p[2::3]
-        if min_slope is not None:
-            log_ds = raw_ds / (1.0 + jnp.abs(raw_ds / jnp.log(min_slope)))
-            safe_ws = raw_ws / (1.0 + jnp.abs(2 * raw_ws / jnp.log(min_slope)))
-            safe_hs = raw_hs / (1.0 + jnp.abs(2 * raw_hs / jnp.log(min_slope)))
-            wf = jax.nn.softmax(safe_ws)
-            hf = jax.nn.softmax(safe_hs)
-        else:
-            log_ds = raw_ds
-            wf = jax.nn.softmax(raw_ws)
-            hf = jax.nn.softmax(raw_hs)
+        nbin = (len(p) + 1) // 3
 
-        log_ds = jnp.concat([jnp.zeros((1,)), log_ds, jnp.zeros((1,))])
+        raw_ws, raw_hs, raw_ds = p[::3], p[1::3], p[2::3]
+        # From distrax. Offset exactly makes slope=1 when raw_slope=0
+        offset = jnp.log(jnp.expm1(1.0 - min_knot_slope))
+        log_ds = jnp.concat(
+            [
+                jnp.zeros((1,)),
+                jnp.log(jax.nn.softplus(raw_ds + offset) + min_knot_slope),
+                jnp.zeros((1,)),
+            ]
+        )
+        # Softmax over the span left once every bin has taken min_bin_size
+        wf = (
+            jax.nn.softmax(raw_ws) * ((upper - lower) - min_bin_size * nbin)
+            + min_bin_size
+        )
+        hf = (
+            jax.nn.softmax(raw_hs) * ((upper - lower) - min_bin_size * nbin)
+            + min_bin_size
+        )
 
         return _RQSpline(
             k_ws=wf,
@@ -66,7 +77,6 @@ class _RQSpline(eqx.Module):
             log_k_dls=log_ds[:-1],
             log_k_drs=log_ds[1:],
             lower=lower,
-            upper=upper,
         )
 
     def fwd_logdydx(
@@ -104,10 +114,9 @@ class _RQSpline(eqx.Module):
         return y, ld
 
     def bounds(self) -> tuple[Float[Array, " k"], Float[Array, " k"]]:
-        span = self.upper - self.lower
-        bin_x_01 = jnp.concat([jnp.zeros(1), jnp.cumsum(self.k_ws)])
-        bin_y_01 = jnp.concat([jnp.zeros(1), jnp.cumsum(self.k_hs)])
-        return bin_x_01 * span + self.lower, bin_y_01 * span + self.lower
+        bin_xs = self.lower + jnp.concat([jnp.zeros(1), jnp.cumsum(self.k_ws)])
+        bin_ys = self.lower + jnp.concat([jnp.zeros(1), jnp.cumsum(self.k_hs)])
+        return bin_xs, bin_ys
 
     def inv_logdxdy(self, y: Float[Array, ""]):
         n = self.k_hs.shape[0]
@@ -154,28 +163,31 @@ def rqs_fwd(
     params: Float[Array, " p"],
     lower: float = -5.0,
     upper: float = 5.0,
-    min_slope: float | None = 1e-3,
+    min_bin_size: float = 1e-4,
+    min_knot_slope: float = 1e-4,
 ) -> tuple[Float[Array, ""], Float[Array, ""]]:
     """Evaluate rational quadratic spline.
 
     Rational quadratic splines from Durkan et al. are a parametric constant time
     invertible transform from R to R with desirable stability properties. Params
     is a block of parameters designed for a neural network to output, they are
-    mostly in log space and every (with reasonable min-slope) real set of
-    parameters will generate a valid spline.
+    mostly in log space and every real set of parameters will generate a valid
+    spline.
 
     Parameters
     ----------
-    y : Float[Array, ""]
-        Output for inversion.
+    x : Float[Array, ""]
+        Input to transform.
     params : Float[Array, " p"]
         Array of real parameters.
     lower : float
         Lower limit of spline beyond which the transform is linear
     upper : float
         Upper bound of spline beyond which the transform is linear
-    min_slope : float | None
-        a slope constraint for the slope parameters to keep them valid.
+    min_bin_size : float
+        Bin size constraint to prevent unstable tiny bins.
+    min_knot_slope : float
+        Slope constraint for the slope parameters to keep them valid.
 
     Returns
     -------
@@ -187,7 +199,13 @@ def rqs_fwd(
     FIXME: Add docs.
 
     """
-    spline = _RQSpline.decode(params, min_slope=min_slope, lower=lower, upper=upper)
+    spline = _RQSpline.decode(
+        params,
+        min_bin_size=min_bin_size,
+        min_knot_slope=min_knot_slope,
+        lower=lower,
+        upper=upper,
+    )
     return spline.fwd_logdydx(x)
 
 
@@ -196,15 +214,16 @@ def rqs_inv(
     params: Float[Array, " p"],
     lower: float = -5.0,
     upper: float = 5.0,
-    min_slope: float | None = 1e-3,
+    min_bin_size: float = 1e-4,
+    min_knot_slope: float = 1e-4,
 ) -> tuple[Float[Array, ""], Float[Array, ""]]:
     """Invert rational quadratic spline.
 
     Rational quadratic splines from Durkan et al. are a parametric constant time
     invertible transform from R to R with desirable stability properties. Params
     is a block of parameters designed for a neural network to output, they are
-    mostly in log space and every real set of parameters (with reasonable
-    min-slope) will generate a valid spline.
+    mostly in log space and every real set of parameters will generate a valid
+    spline.
 
     Parameters
     ----------
@@ -216,8 +235,10 @@ def rqs_inv(
         Lower limit of spline beyond which the transform is linear
     upper : float
         Upper bound of spline beyond which the transform is linear
-    min_slope : float | None
-        a slope constraint for the slope parameters to keep them valid.
+    min_bin_size : float
+        Bin size constraint to prevent unstable tiny bins.
+    min_knot_slope : float
+        Slope constraint for the slope parameters to keep them valid.
 
     Returns
     -------
@@ -229,5 +250,11 @@ def rqs_inv(
     FIXME: Add docs.
 
     """
-    spline = _RQSpline.decode(params, min_slope=min_slope, lower=lower, upper=upper)
+    spline = _RQSpline.decode(
+        params,
+        min_bin_size=min_bin_size,
+        min_knot_slope=min_knot_slope,
+        lower=lower,
+        upper=upper,
+    )
     return spline.inv_logdxdy(y)

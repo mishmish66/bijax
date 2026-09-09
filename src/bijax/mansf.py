@@ -39,7 +39,8 @@ class ARSpline(eqx.Module):
     net: CausalMLP
     low: float = eqx.field(static=True, default=-5.0)
     high: float = eqx.field(static=True, default=5.0)
-    min_slope: float | None = eqx.field(static=True, default=1e-3)
+    min_bin_size: float = eqx.field(static=True, default=1e-4)
+    min_knot_slope: float = eqx.field(static=True, default=1e-4)
     direction: Literal["maf"] | Literal["iaf"] = eqx.field(static=True, default="maf")
 
     def fwd_logdet(self, x: Float[Array, " d"], c: Float[Array, " c"] | None = None):
@@ -108,12 +109,13 @@ class ARSpline(eqx.Module):
 
     def _fast(self, inp: Float[Array, " d"], c: Float[Array, " c"] | None = None):
         params = self.net(inp, c)  # (dim,) scalar-per-row -> (dim, n_params)
-        outp, ld = jax.vmap(rqs_fwd, in_axes=(0, 0, None, None, None))(
+        outp, ld = jax.vmap(rqs_fwd, in_axes=(0, 0, None, None, None, None))(
             inp,
             params,
             self.low,
             self.high,
-            self.min_slope,
+            self.min_bin_size,
+            self.min_knot_slope,
         )
         return outp, ld.sum()
 
@@ -126,16 +128,18 @@ class ARSpline(eqx.Module):
                 params[i],
                 self.low,
                 self.high,
-                self.min_slope,
+                self.min_bin_size,
+                self.min_knot_slope,
             )
             outp = outp.at[i].set(outp_i)
         # log-det of the inverse is minus that of the forward at the solved x
         params = self.net(outp, c)
-        _, ld = jax.vmap(rqs_fwd, in_axes=(0, 0, None, None, None))(
+        _, ld = jax.vmap(rqs_fwd, in_axes=(0, 0, None, None, None, None))(
             outp,
             params,
             self.low,
             self.high,
-            self.min_slope,
+            self.min_bin_size,
+            self.min_knot_slope,
         )
         return outp, -ld.sum()

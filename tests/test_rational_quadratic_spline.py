@@ -6,7 +6,7 @@ from jax import numpy as jnp
 from jax import random as jr
 
 from bijax.rational_quadratic_spline import _RQSpline as RQS
-from bijax.rational_quadratic_spline import spline_fwd, spline_inf
+from bijax.rational_quadratic_spline import rqs_fwd, rqs_inv
 
 # A diagonal through (bin count x range x parameter scale), not the full cross product:
 # the axes are independent, so one representative combination each is enough.
@@ -26,10 +26,10 @@ SHAPE = pytest.mark.parametrize(  # for tests where the parameter scale is irrel
     [(n, b) for n, b, _ in CASES],
     ids=[f"bins{n}" for n, _, _ in CASES],
 )
-BOTH = pytest.mark.parametrize(
-    "transform", [spline_fwd, spline_inv], ids=["fwd", "inv"]
-)
-MIN_SLOPE = 1e-3  # what tests that decode directly, but do not probe the slope, use
+BOTH = pytest.mark.parametrize("transform", [rqs_fwd, rqs_inv], ids=["fwd", "inv"])
+# what tests that decode directly, but do not probe the constraints, use
+MIN_BIN_SIZE = 1e-4
+MIN_KNOT_SLOPE = 1e-4
 
 
 def _params(seed, n_bins, scale):
@@ -38,6 +38,10 @@ def _params(seed, n_bins, scale):
 
 def _span(bounds):
     return bounds[1] - bounds[0]
+
+
+def _decode(p, bounds, min_bin_size=MIN_BIN_SIZE, min_knot_slope=MIN_KNOT_SLOPE):
+    return RQS.decode(p, min_bin_size, min_knot_slope, bounds[0], bounds[1])
 
 
 def _grid(n, bounds, pad_frac=0.0):
@@ -63,8 +67,8 @@ def _grads(transform, x, p, bounds):
 
 
 def _short_table_spline(n_bins, bounds, shortfall=1e-5):
-    """Spline whose bin sizes sum to just under one, leaving a sliver below ``upper``."""
-    sizes = jnp.full((n_bins,), (1.0 - shortfall) / n_bins)
+    """Spline whose bins stop short of ``upper``, leaving a sliver above the table."""
+    sizes = jnp.full((n_bins,), (_span(bounds) - shortfall) / n_bins)
     log_d = jnp.linspace(-1.0, 1.0, n_bins + 1)
     return RQS(
         k_ws=sizes,
@@ -72,7 +76,6 @@ def _short_table_spline(n_bins, bounds, shortfall=1e-5):
         log_k_dls=log_d[:-1],
         log_k_drs=log_d[1:],
         lower=bounds[0],
-        upper=bounds[1],
     )
 
 
@@ -94,8 +97,8 @@ def test_inverse_undoes_forward_and_negates_the_logdet(n_bins, bounds, scale):
     for seed in range(4):
         p = _params(seed, n_bins, scale)
         x = _grid(257, bounds)
-        y, ld = _sweep(spline_fwd, x, p, bounds)
-        xr, ldi = _sweep(spline_inv, y, p, bounds)
+        y, ld = _sweep(rqs_fwd, x, p, bounds)
+        xr, ldi = _sweep(rqs_inv, y, p, bounds)
         assert jnp.allclose(xr, x, atol=1e-3 * _span(bounds))
         assert jnp.allclose(ld + ldi, 0.0, atol=2e-3)
 
@@ -142,44 +145,79 @@ def test_outside_the_range_is_the_identity_with_frozen_gradients(
 
 
 @pytest.mark.parametrize(
-    ("n_params", "min_slope"),
-    [(n, 1e-3) for n in (0, 1, 3, 4, 6, 9, 10)]
-    + [(11, s) for s in (0.0, 1.0, -0.5, 2.0)],
+    ("n_params", "min_bin_size", "min_knot_slope"),
+    [(n, MIN_BIN_SIZE, MIN_KNOT_SLOPE) for n in (0, 1, 3, 4, 6, 9, 10)]
+    + [(11, s, MIN_KNOT_SLOPE) for s in (0.0, 1.0, -0.5, 2.0)]
+    + [(11, MIN_BIN_SIZE, s) for s in (0.0, 1.0, -0.5, 2.0)],
 )
-def test_rejects_invalid_params(n_params, min_slope):
+def test_rejects_invalid_params(n_params, min_bin_size, min_knot_slope):
     with pytest.raises(ValueError):
-        spline_fwd(jnp.array(0.0), jnp.zeros(n_params), -5.0, 5.0, min_slope)
+        rqs_fwd(
+            jnp.array(0.0),
+            jnp.zeros(n_params),
+            -5.0,
+            5.0,
+            min_bin_size,
+            min_knot_slope,
+        )
+
+
+@pytest.mark.parametrize("n_bins", [2, 4, 8, 16, 32])
+def test_rejects_a_bin_size_floor_that_cannot_fit_the_range(n_bins):
+    bounds = (0.0, 1.0)  # a floor inside (0, 1) can still overshoot a unit range
+    with pytest.raises(ValueError):
+        rqs_fwd(
+            jnp.array(0.5),
+            jnp.zeros(3 * n_bins - 1),
+            *bounds,
+            1.5 / n_bins,
+            MIN_KNOT_SLOPE,
+        )
 
 
 @CASE
-@pytest.mark.parametrize("min_slope", [1e-4, 1e-3, 1e-2])
+@pytest.mark.parametrize("min_bin_size", [1e-4, 1e-3, 1e-2])
 def test_decoded_bins_partition_the_range_without_degeneracy(
-    n_bins, bounds, scale, min_slope
+    n_bins, bounds, scale, min_bin_size
 ):
-    spline = RQS.decode(
-        _params(9, n_bins, 100.0 * scale),
-        min_slope=min_slope,
-        lower=bounds[0],
-        upper=bounds[1],
+    span = _span(bounds)
+    spline = _decode(
+        _params(9, n_bins, 100.0 * scale), bounds, min_bin_size=min_bin_size
     )
     for sizes in (spline.k_ws, spline.k_hs):
-        assert jnp.allclose(sizes.sum(), 1.0, atol=1e-5)
-        assert jnp.all(sizes >= min_slope / n_bins)
+        assert jnp.allclose(sizes.sum(), span, atol=1e-5 * span)
+        assert jnp.all(sizes >= min_bin_size)
     for knots in spline.bounds():
         assert knots[0] == bounds[0]
-        assert jnp.allclose(knots[-1], bounds[1], atol=1e-5 * _span(bounds))
+        assert jnp.allclose(knots[-1], bounds[1], atol=1e-5 * span)
         assert jnp.all(jnp.diff(knots) > 0)
+
+
+@CASE
+@pytest.mark.parametrize("min_knot_slope", [1e-4, 1e-3, 1e-2])
+def test_decoded_knot_slopes_respect_the_floor(n_bins, bounds, scale, min_knot_slope):
+    spline = _decode(
+        _params(9, n_bins, 100.0 * scale), bounds, min_knot_slope=min_knot_slope
+    )
+    log_d = jnp.concatenate([spline.log_k_dls, spline.log_k_drs])
+    assert _finite(log_d)
+    assert jnp.all(log_d >= jnp.log(min_knot_slope))
+
+
+@SHAPE
+def test_zero_params_decode_to_unit_knot_slopes(n_bins, bounds):
+    spline = _decode(jnp.zeros(3 * n_bins - 1), bounds)
     d = jnp.exp(jnp.concatenate([spline.log_k_dls, spline.log_k_drs]))
-    assert jnp.all(d >= min_slope) and jnp.all(d <= 1.0 / min_slope)
+    assert jnp.allclose(d, 1.0, atol=1e-5)
 
 
 @CASE
 def test_param_slots_map_to_widths_heights_and_derivatives(n_bins, bounds, scale):
     p = _params(7, n_bins, scale)
-    knots = RQS.decode(p, MIN_SLOPE, bounds[0], bounds[1]).bounds()
+    knots = _decode(p, bounds).bounds()
 
     def shift(slot):
-        moved = RQS.decode(p.at[slot].add(5.0), MIN_SLOPE, bounds[0], bounds[1])
+        moved = _decode(p.at[slot].add(5.0), bounds)
         return [
             float(jnp.max(jnp.abs(a - b)))
             for a, b in zip(moved.bounds(), knots, strict=True)
@@ -195,8 +233,8 @@ def test_param_slots_map_to_widths_heights_and_derivatives(n_bins, bounds, scale
 
 def test_omitting_the_bounds_gives_a_working_spline():
     p, x = _params(0, 8, 1.0), jnp.array(0.25)
-    y, ld = spline_fwd(x, p)
-    xr, ldi = spline_inv(y, p)
+    y, ld = rqs_fwd(x, p)
+    xr, ldi = rqs_inv(y, p)
     assert _finite((y, ld, xr, ldi))
     assert jnp.allclose(xr, x, atol=1e-3)
     assert jnp.allclose(ld + ldi, 0.0, atol=1e-3)
@@ -219,20 +257,21 @@ def test_jit_and_vmap_agree_with_the_unbatched_call(transform):
 @CASE
 @BOTH
 def test_continuous_across_the_range_boundary(n_bins, bounds, scale, transform):
-    p = _params(4, n_bins, 10.0 * scale)
-    eps = 1e-5 * _span(bounds)
-    for edge in bounds:
-        inner, _ = transform(jnp.array(edge - eps), p, *bounds)
-        outer, _ = transform(jnp.array(edge + eps), p, *bounds)
-        assert jnp.abs(outer - inner) < 1e-3 * _span(bounds)
+    with jax.enable_x64():
+        p = _params(4, n_bins, 10.0 * scale)
+        eps = 1e-12 * _span(bounds)
+        for edge in bounds:
+            inner, _ = transform(jnp.array(edge - eps), p, *bounds)
+            outer, _ = transform(jnp.array(edge + eps), p, *bounds)
+            assert jnp.abs(outer - inner) < 1e-3 * _span(bounds)
 
 
 @CASE
 @BOTH
 def test_gradients_are_finite_exactly_on_the_knots(n_bins, bounds, scale, transform):
     p = _params(12, n_bins, 3.0 * scale)
-    x_knots, y_knots = RQS.decode(p, MIN_SLOPE, bounds[0], bounds[1]).bounds()
-    knots = x_knots if transform is spline_fwd else y_knots
+    x_knots, y_knots = _decode(p, bounds).bounds()
+    knots = x_knots if transform is rqs_fwd else y_knots
     grads = jax.vmap(_grads, in_axes=(None, 0, None, None))(transform, knots, p, bounds)
     assert _finite(grads)
 
@@ -254,7 +293,7 @@ def test_values_and_gradients_are_finite_for_extreme_params(
 @pytest.mark.parametrize("n_bins", [n for n, _, _ in CASES])
 def test_inverse_gradients_are_finite_when_a_bin_is_linear(n_bins):
     assert _finite(
-        _grads(spline_inv, jnp.array(0.25), jnp.zeros(3 * n_bins - 1), (-5.0, 5.0))
+        _grads(rqs_inv, jnp.array(0.25), jnp.zeros(3 * n_bins - 1), (-5.0, 5.0))
     )
 
 
@@ -285,8 +324,8 @@ def test_float64_roundtrip_is_exact_for_extreme_params(n_bins, bounds, scale):
         for seed in range(4):
             p = _params(seed, n_bins, 10.0 * scale)
             x = _grid(1001, bounds)
-            y, ld = _sweep(spline_fwd, x, p, bounds)
-            xr, ldi = _sweep(spline_inv, y, p, bounds)
+            y, ld = _sweep(rqs_fwd, x, p, bounds)
+            xr, ldi = _sweep(rqs_inv, y, p, bounds)
             assert jnp.all(jnp.diff(y) > 0)
             assert jnp.max(jnp.abs(xr - x)) < 1e-7 * _span(bounds)
             assert jnp.max(jnp.abs(ld + ldi)) < 1e-6
