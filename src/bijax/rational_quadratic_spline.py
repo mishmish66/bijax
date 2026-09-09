@@ -50,6 +50,13 @@ class _RQSpline(eqx.Module):
             raise ValueError(msg)
 
         nbin = (len(p) + 1) // 3
+        if min_bin_size * nbin >= upper - lower:
+            msg = (
+                f"min_bin_size {min_bin_size} leaves no span for {nbin} bins "
+                f"in range ({lower}, {upper}); it must be below "
+                f"{(upper - lower) / nbin}"
+            )
+            raise ValueError(msg)
 
         raw_ws, raw_hs, raw_ds = p[::3], p[1::3], p[2::3]
         # From distrax. Offset exactly makes slope=1 when raw_slope=0
