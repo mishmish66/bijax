@@ -69,12 +69,14 @@ class _RQSpline(eqx.Module):
             ]
         )
         # Softmax over the span left once every bin has taken min_bin_size
+        safe_ws = raw_ws / (1.0 + jnp.abs(2 * raw_ws / jnp.log(min_knot_slope)))
+        safe_hs = raw_hs / (1.0 + jnp.abs(2 * raw_hs / jnp.log(min_knot_slope)))
         wf = (
-            jax.nn.softmax(raw_ws) * ((upper - lower) - min_bin_size * nbin)
+            jax.nn.softmax(safe_ws) * ((upper - lower) - min_bin_size * nbin)
             + min_bin_size
         )
         hf = (
-            jax.nn.softmax(raw_hs) * ((upper - lower) - min_bin_size * nbin)
+            jax.nn.softmax(safe_hs) * ((upper - lower) - min_bin_size * nbin)
             + min_bin_size
         )
 
