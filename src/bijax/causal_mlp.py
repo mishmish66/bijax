@@ -168,7 +168,7 @@ class CausalMLP(eqx.Module):
         activation: Callable[[Array], Array] = jax.nn.gelu,
         rng: Key[Array, ""],
     ):
-        """Randomly intialize a CausalMLP
+        """Randomly intialize a CausalMLP.
 
         A CausalMLP is a special kind of MLP where each output of a rank depends
         only on the inputs of at most its rank. The conditioning dimension
