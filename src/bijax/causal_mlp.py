@@ -104,11 +104,8 @@ class CausalLinear(eqx.Module):
         self.bias = jr.uniform(bkey, (len(out_ranks),))
 
     def __call__(self, x: Float[Array, " in"]) -> Float[Array, " out"]:
-        w_full = (
-            jnp.zeros((self.in_dim, self.out_dim))
-            .at[self.unmasked_idxs]
-            .set(self.w_flat)
-        )
+        w_full = jnp.zeros((self.in_dim, self.out_dim))
+        w_full = w_full.at[self.unmasked_idxs].set(self.w_flat)
         return jnp.einsum("i,io->o", x, w_full) + self.bias
 
 
@@ -121,6 +118,7 @@ class CausalMLP(eqx.Module):
     cond_dim: int | None = eqx.field(static=True)
     in_rank_dim: int | Literal["scalar"] = eqx.field(static=True)
     out_rank_dim: int | Literal["scalar"] = eqx.field(static=True)
+    dropout: eqx.nn.Dropout | None
 
     @overload
     def __init__(
@@ -131,10 +129,11 @@ class CausalMLP(eqx.Module):
         width: int,
         depth: int,
         *,
+        dropout: float = 0.0,
         activation: Callable[[Array], Array] = jax.nn.gelu,
         rng: Key[Array, ""],
     ):
-        """Randomly intialize a CausalMLP
+        """Randomly intialize a CausalMLP.
 
         A CausalMLP is a special kind of MLP where each output of a rank depends
         only on the inputs of at most its rank. The conditioning dimension
@@ -149,6 +148,7 @@ class CausalMLP(eqx.Module):
           out_rank_dim: Dimension of each rank's output
           width: The width of the hidden dim for (non condition)
           depth: The number of layers (0 makes it just a CausalLinear)
+          dropout: dropout rate for hidden activations
           activation: The nonlinearity to apply between layers
           rng: A random key to generate the parameters
         """
@@ -165,6 +165,7 @@ class CausalMLP(eqx.Module):
         *,
         cond_dim: int,
         cond_width: int | None = None,
+        dropout: float = 0.0,
         activation: Callable[[Array], Array] = jax.nn.gelu,
         rng: Key[Array, ""],
     ):
@@ -185,6 +186,7 @@ class CausalMLP(eqx.Module):
           depth: Number of layers (0 makes it just a CausalLinear)
           cond_width: Width of hidden dims for condition inputs
           cond_dim: Dimension of conditioning input
+          dropout: dropout rate for hidden activations
           activation: Nonlinearity between layers
           rng: Random key generating parameters
         """
@@ -200,6 +202,7 @@ class CausalMLP(eqx.Module):
         *,
         cond_width: int | None = None,
         cond_dim: int | None = None,
+        dropout: float = 0.0,
         activation: Callable[[Array], Array] = jax.nn.gelu,
         rng: Key[Array, ""],
     ):
@@ -211,6 +214,7 @@ class CausalMLP(eqx.Module):
         self.out_rank_dim = out_rank_dim
         self.num_ranks = num_ranks
         self.cond_dim = cond_dim
+        self.dropout = eqx.nn.Dropout(dropout) if dropout > 0.0 else None
 
         if in_rank_dim == "scalar":
             in_rank_dim = 1
@@ -240,7 +244,10 @@ class CausalMLP(eqx.Module):
         self.activation = activation
 
     def __call__(
-        self, x: Float[Array, "l di"] | Float[Array, " l"], c: Float[Array, " c"] | None
+        self,
+        x: Float[Array, "l di"] | Float[Array, " l"],
+        c: Float[Array, " c"] | None,
+        rng: Key[Array, ""] | None = None,
     ) -> Float[Array, "l do"] | Float[Array, " l"]:
         # scalar input is already the flat (l,) vector CausalLinear wants;
         # otherwise flatten the (l, di) grid row-major.
@@ -254,6 +261,12 @@ class CausalMLP(eqx.Module):
             h = lay(h)
             if i < len(self.layers) - 1:
                 h = self.activation(h)
+                if self.dropout is not None:
+                    if rng is not None:
+                        rng, key = jr.split(rng)
+                        h = self.dropout(h, key=key)
+                    else:
+                        self.dropout(h)
         # scalar output stays (l,); otherwise unflatten to (l, do).
         if self.out_rank_dim == "scalar":
             return h

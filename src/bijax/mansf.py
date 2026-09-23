@@ -27,7 +27,7 @@ from typing import Literal
 import equinox as eqx
 import jax
 from jax import numpy as jnp
-from jaxtyping import Array, Float
+from jaxtyping import Array, Float, Key
 
 from bijax.causal_mlp import CausalMLP
 from bijax.rational_quadratic_spline import rqs_fwd, rqs_inv
@@ -43,7 +43,7 @@ class ARSpline(eqx.Module):
     min_knot_slope: float = eqx.field(static=True, default=1e-4)
     direction: Literal["maf"] | Literal["iaf"] = eqx.field(static=True, default="maf")
 
-    def fwd_logdet(self, x: Float[Array, " d"], c: Float[Array, " c"] | None = None):
+    def fwd_logdet(self, x: Float[Array, " d"], c: Float[Array, " c"] | None = None, rng: Key[Array, ""] | None = None):
         r"""Apply the mapping represented by this `ARSpline` and get the log determinant.
 
         Computes the inverse of the bijection represented by this
@@ -69,13 +69,13 @@ class ARSpline(eqx.Module):
 
         """
         if self.direction == "maf":
-            return self._slow(x, c)
+            return self._slow(x, c, rng)
         if self.direction == "iaf":
-            return self._fast(x, c)
+            return self._fast(x, c, rng)
         msg = f"direction must be maf or iaf not {self.direction}"
         raise ValueError(msg)
 
-    def inv_logdet(self, y: Float[Array, " d"], c: Float[Array, " c"] | None = None):
+    def inv_logdet(self, y: Float[Array, " d"], c: Float[Array, " c"] | None = None, rng: Key[Array, ""] | None = None):
         r"""Invert the mapping represented by this `ARSpline` and get the log determinant.
 
         Computes the inverse of the bijection represented by this
@@ -101,14 +101,14 @@ class ARSpline(eqx.Module):
 
         """
         if self.direction == "maf":
-            return self._fast(y, c)
+            return self._fast(y, c, rng)
         if self.direction == "iaf":
-            return self._slow(y, c)
+            return self._slow(y, c, rng)
         msg = f"direction must be maf or iaf not {self.direction}"
         raise ValueError(msg)
 
-    def _fast(self, inp: Float[Array, " d"], c: Float[Array, " c"] | None = None):
-        params = self.net(inp, c)  # (dim,) scalar-per-row -> (dim, n_params)
+    def _fast(self, inp: Float[Array, " d"], c: Float[Array, " c"] | None = None, rng: Key[Array, ""] | None = None):
+        params = self.net(inp, c, rng)  # (dim,) scalar-per-row -> (dim, n_params)
         outp, ld = jax.vmap(rqs_fwd, in_axes=(0, 0, None, None, None, None))(
             inp,
             params,
@@ -119,10 +119,10 @@ class ARSpline(eqx.Module):
         )
         return outp, ld.sum()
 
-    def _slow(self, inp: Float[Array, " d"], c: Float[Array, " c"] | None = None):
+    def _slow(self, inp: Float[Array, " d"], c: Float[Array, " c"] | None = None, rng: Key[Array, ""] | None = None):
         outp = jnp.zeros(self.net.num_ranks)
         for i in range(self.net.num_ranks):
-            params = self.net(outp, c)  # (dim, n_params)
+            params = self.net(outp, c, rng)  # (dim, n_params)
             outp_i, _ = rqs_inv(
                 inp[i],
                 params[i],
@@ -133,7 +133,7 @@ class ARSpline(eqx.Module):
             )
             outp = outp.at[i].set(outp_i)
         # log-det of the inverse is minus that of the forward at the solved x
-        params = self.net(outp, c)
+        params = self.net(outp, c, rng)
         _, ld = jax.vmap(rqs_fwd, in_axes=(0, 0, None, None, None, None))(
             outp,
             params,
