@@ -172,12 +172,9 @@ class CausalMLP(eqx.Module):
             h = lay(h)
             if i < len(self.layers) - 1:
                 h = self.activation(h)
-                if self.dropout is not None:
-                    if rng is not None:
-                        rng, key = jr.split(rng)
-                        h = self.dropout(h, key=key)
-                    else:
-                        self.dropout(h)
+                if self.dropout is not None and rng is not None:
+                    rng, key = jr.split(rng)
+                    h = self.dropout(h, key=key)
         # scalar output stays (l,); otherwise unflatten to (l, do).
         if self.out_rank_dim == "scalar":
             return h
