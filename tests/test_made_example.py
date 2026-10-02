@@ -1,27 +1,12 @@
-"""Tests for the masked autoregressive CausalLinear / CausalMLP."""
+"""Tests for the example MADE conditioner (CausalMLP)."""
 
 import jax
 import pytest
 from jax import numpy as jnp
 from jax import random as jr
+from made_spline_flow import CausalMLP
 
-from bijax.causal_mlp import CausalLinear, CausalMLP
-
-
-def test_causal_linear_respects_ranks():
-    # reads are inclusive: rank r reads every input of rank <= r
-    lay = CausalLinear([0, 0, 1], [0, 1], rng=jr.key(0))
-    x = jnp.array([1.0, 1.0, 1.0])
-    J = jax.jacobian(lay)(x)
-    assert jnp.all(jnp.abs(J[0, :2]) > 0)
-    assert jnp.allclose(J[0, 2], 0.0)
-    assert jnp.all(jnp.abs(J[1]) > 0)
-
-
-def test_causal_linear_shapes():
-    lay = CausalLinear([0, 1, 2], [0, 1, 2, 3], rng=jr.key(0))
-    out = lay(jnp.ones(3))
-    assert out.shape == (4,)
+from bijax import CausalLinear
 
 
 def test_causal_mlp_output_shape_vector_out():
@@ -145,3 +130,28 @@ def test_causal_mlp_requires_two_ranks():
             depth=1,
             rng=jr.key(0),
         )
+
+
+def _dropout_pair(rate):
+    kwargs = {
+        "num_ranks": 3,
+        "in_rank_dim": "scalar",
+        "out_rank_dim": 2,
+        "width": 16,
+        "depth": 2,
+    }
+    plain = CausalMLP(**kwargs, rng=jr.key(0))
+    drop = CausalMLP(**kwargs, dropout=rate, rng=jr.key(0))
+    return plain, drop
+
+
+def test_dropout_is_off_without_rng():
+    plain, drop = _dropout_pair(0.5)
+    x = jr.normal(jr.key(1), (3,))
+    assert jnp.array_equal(drop(x, None), plain(x, None))
+
+
+def test_dropout_with_rng_changes_the_output():
+    plain, drop = _dropout_pair(0.5)
+    x = jr.normal(jr.key(1), (3,))
+    assert not jnp.allclose(drop(x, None, rng=jr.key(2)), plain(x, None))

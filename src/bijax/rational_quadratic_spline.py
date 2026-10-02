@@ -27,6 +27,7 @@ class _RQSpline(eqx.Module):
     log_k_dls: Float[Array, " k"]
     log_k_drs: Float[Array, " k"]
     lower: float = eqx.field(static=True)
+    upper: float = eqx.field(static=True)
 
     @staticmethod
     def decode(
@@ -36,10 +37,10 @@ class _RQSpline(eqx.Module):
         lower: float,
         upper: float,
     ) -> "_RQSpline":
-        if len(p) % 3 != 2:
+        if len(p) % 3 != 1 or len(p) < 7:
             msg = (
-                f"param length must be 3*B - 1 for B bins, got {len(p)}; "
-                "layout is B widths, B heights, B-1 interior derivatives"
+                f"param length must be 3*B+1 for B >= 2 bins, got {len(p)}; "
+                "layout is B widths, B heights, B+1 knot derivatives"
             )
             raise ValueError(msg)
         if not 0.0 < min_knot_slope < 1.0:
@@ -49,7 +50,7 @@ class _RQSpline(eqx.Module):
             msg = f"min_bin_size must be in (0, 1), got {min_bin_size}"
             raise ValueError(msg)
 
-        nbin = (len(p) + 1) // 3
+        nbin = len(p) // 3
         if min_bin_size * nbin >= upper - lower:
             msg = (
                 f"min_bin_size {min_bin_size} leaves no span for {nbin} bins "
@@ -58,16 +59,10 @@ class _RQSpline(eqx.Module):
             )
             raise ValueError(msg)
 
-        raw_ws, raw_hs, raw_ds = p[::3], p[1::3], p[2::3]
+        raw_ds, raw_ws, raw_hs = p[::3], p[1::3], p[2::3]
         # From distrax. Offset exactly makes slope=1 when raw_slope=0
         offset = jnp.log(jnp.expm1(1.0 - min_knot_slope))
-        log_ds = jnp.concat(
-            [
-                jnp.zeros((1,)),
-                jnp.log(jax.nn.softplus(raw_ds + offset) + min_knot_slope),
-                jnp.zeros((1,)),
-            ]
-        )
+        log_ds = jnp.log(jax.nn.softplus(raw_ds + offset) + min_knot_slope)
         # Softmax over the span left once every bin has taken min_bin_size
         safe_ws = raw_ws / (1.0 + jnp.abs(2 * raw_ws / jnp.log(min_knot_slope)))
         safe_hs = raw_hs / (1.0 + jnp.abs(2 * raw_hs / jnp.log(min_knot_slope)))
@@ -86,6 +81,7 @@ class _RQSpline(eqx.Module):
             log_k_dls=log_ds[:-1],
             log_k_drs=log_ds[1:],
             lower=lower,
+            upper=upper,
         )
 
     def fwd_logdydx(
@@ -123,9 +119,11 @@ class _RQSpline(eqx.Module):
         return y, ld
 
     def bounds(self) -> tuple[Float[Array, " k"], Float[Array, " k"]]:
+        """Knot positions; both tables end at one shared knot no higher than upper."""
         bin_xs = self.lower + jnp.concat([jnp.zeros(1), jnp.cumsum(self.k_ws)])
         bin_ys = self.lower + jnp.concat([jnp.zeros(1), jnp.cumsum(self.k_hs)])
-        return bin_xs, bin_ys
+        top = jnp.minimum(bin_xs[-1], self.upper)
+        return bin_xs.at[-1].set(top), bin_ys.at[-1].set(top)
 
     def inv_logdxdy(self, y: Float[Array, ""]):
         n = self.k_hs.shape[0]
@@ -188,7 +186,9 @@ def rqs_fwd(
     x : Float[Array, ""]
         Input to transform.
     params : Float[Array, " p"]
-        Array of real parameters.
+        ``3*B + 1`` reals for ``B >= 2`` bins, interleaved as
+        ``d_0, w_0, h_0, d_1, ..., w_{B-1}, h_{B-1}, d_B``: knot derivatives
+        ``d`` (including both range ends), bin widths ``w`` and heights ``h``.
     lower : float
         Lower limit of spline beyond which the transform is linear
     upper : float
@@ -239,7 +239,9 @@ def rqs_inv(
     y : Float[Array, ""]
         Output for inversion.
     params : Float[Array, " p"]
-        Array of real parameters.
+        ``3*B + 1`` reals for ``B >= 2`` bins, interleaved as
+        ``d_0, w_0, h_0, d_1, ..., w_{B-1}, h_{B-1}, d_B``: knot derivatives
+        ``d`` (including both range ends), bin widths ``w`` and heights ``h``.
     lower : float
         Lower limit of spline beyond which the transform is linear
     upper : float

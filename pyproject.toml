@@ -27,7 +27,7 @@ where = ["src"]
 version = {attr = "bijax.__version__"}
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "examples"]
 testpaths = ["tests"]
 addopts = "--cov=bijax --cov-report=term-missing"
 

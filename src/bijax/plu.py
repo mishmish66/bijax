@@ -47,10 +47,24 @@ class PLU(eqx.Module):
         ud = jnp.diag(sg(self.signs) * jnp.exp(self.logs))
         return ud.at[jnp.triu_indices(self.dim, 1)].set(self.uflat)
 
-    def fwd_logdet(self, x: Float[Array, " d"]):
+    def fwd_logdet(
+        self,
+        x: Float[Array, " d"],
+        c: Float[Array, " c"] | None = None,
+        *,
+        rng: Key[Array, ""] | None = None,
+    ) -> tuple[Float[Array, " d"], Float[Array, ""]]:
+        """Map ``x`` forward and return ``log|det J|``; ``c`` and ``rng`` are unused."""
         return sg(self.p) @ self.l @ self.u @ x, self.logs.sum()
 
-    def inv_logdet(self, y: Float[Array, " d"]):
+    def inv_logdet(
+        self,
+        y: Float[Array, " d"],
+        c: Float[Array, " c"] | None = None,
+        *,
+        rng: Key[Array, ""] | None = None,
+    ) -> tuple[Float[Array, " d"], Float[Array, ""]]:
+        """Map ``y`` back and return ``log|det J|`` of the inverse."""
         z = sg(self.p.T) @ y
         ux = jla.solve_triangular(self.l, z, lower=True, unit_diagonal=True)
         x = jla.solve_triangular(self.u, ux, lower=False)

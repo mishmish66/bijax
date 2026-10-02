@@ -1,37 +1,8 @@
-r"""Autoregressive masked linear / MLP, following MADE.
+"""Masked autoregressive spline flow on two moons, with a MADE conditioner.
 
-@inproceedings{DBLP:conf/nips/BengioB99,
-  author       = {Yoshua Bengio and
-                  Samy Bengio},
-  editor       = {Sara A. Solla and
-                  Todd K. Leen and
-                  Klaus{-}Robert M{\"{u}}ller},
-  title        = {Modeling High-Dimensional Discrete Data with Multi-Layer Neural Networks},
-  booktitle    = {Advances in Neural Information Processing Systems 12, {[NIPS} Conference,
-                  Denver, Colorado, USA, November 29 - December 4, 1999]},
-  pages        = {400--406},
-  publisher    = {The {MIT} Press},
-  year         = {1999},
-  url          = {http://papers.nips.cc/paper/1679-modeling-high-dimensional-discrete-data-with-multi-layer-neural-networks},
-  timestamp    = {Mon, 16 May 2022 15:41:51 +0200},
-  biburl       = {https://dblp.org/rec/conf/nips/BengioB99.bib},
-  bibsource    = {dblp computer science bibliography, https://dblp.org}
-}
-
-@inproceedings{germain_made_2015,
-    address = {Lille, France},
-    series = {Proceedings of {Machine} {Learning} {Research}},
-    title = {{MADE}: {Masked} {Autoencoder} for {Distribution} {Estimation}},
-    volume = {37},
-    url = {https://proceedings.mlr.press/v37/germain15.html},
-    booktitle = {Proceedings of the 32nd {International} {Conference} on {Machine} {Learning}},
-    publisher = {PMLR},
-    author = {Germain, Mathieu and Gregor, Karol and Murray, Iain and Larochelle, Hugo},
-    editor = {Bach, Francis and Blei, David},
-    month = jul,
-    year = {2015},
-    pages = {881--889},
-}
+`CausalMLP` builds a MADE network from `bijax.CausalLinear`; `make_flow` plugs
+it into `bijax.MAF` layers with `bijax.PLU` mixing between them.
+Run ``uv run python examples/made_spline_flow.py`` to train and report the NLL.
 """
 
 from collections.abc import Callable
@@ -40,73 +11,13 @@ from typing import Literal, overload
 
 import equinox as eqx
 import jax
+import optax
 from jax import numpy as jnp
 from jax import random as jr
-from jaxtyping import Array, Float, Int, Key
+from jax.scipy.stats import norm
+from jaxtyping import Array, Float, Key
 
-
-class CausalLinear(eqx.Module):
-    """A linear layer with a configurable dependency structure.
-
-    By zeroing weights relating higher rank inputs to lower rank outputs this
-    linear layer makes outputs depend only on inputs lower ranked than them.
-
-    Examples
-    --------
-    FIXME: Add docs.
-
-    """
-
-    w_flat: Float[Array, " n"]
-    bias: Float[Array, " out"]
-    unmasked_idxs: tuple[Int[Array, " n"], ...]
-
-    in_dim: int = eqx.field(static=True)
-    out_dim: int = eqx.field(static=True)
-
-    def __init__(
-        self,
-        in_ranks: list[int],
-        out_ranks: list[int],
-        *,
-        rng: Key[Array, ""],
-    ):
-        """Randomly initialize a `CausalLinear`.
-
-        supports flexible dependencies between inputs and outputs in
-        the form of ranks. Each output can depend only on inputs with the same
-        or lower rank. This also means that for lower ranking outputs the
-        effective number of parameters involved in the computation is quite low.
-
-        Args:
-          in_ranks: List with length of input dim specifying the rank of each
-          out_ranks: List with length of output dim specifying the rank of each
-          rng: key for random parameter generation
-        """
-        self.in_dim = len(in_ranks)
-        self.out_dim = len(out_ranks)
-
-        # mask[i, j] is True when output j may read input i, laid out as
-        # (in_dim, out_dim) so it indexes the weight matrix directly.
-        mask = jnp.array(in_ranks)[:, None] <= jnp.array(out_ranks)[None, :]
-        fan_in = mask.sum(axis=0)
-        lim = 1.0 / jnp.sqrt(fan_in.clip(min=1))
-
-        rng, wkey, bkey = jr.split(rng, 3)
-
-        w_unif = jr.uniform(
-            wkey, (len(in_ranks), len(out_ranks)), minval=-1.0, maxval=1.0
-        )
-        w_full = w_unif * lim[None, :]
-
-        self.unmasked_idxs = jnp.nonzero(mask)
-        self.w_flat = w_full[self.unmasked_idxs]
-        self.bias = jr.uniform(bkey, (len(out_ranks),))
-
-    def __call__(self, x: Float[Array, " in"]) -> Float[Array, " out"]:
-        w_full = jnp.zeros((self.in_dim, self.out_dim))
-        w_full = w_full.at[self.unmasked_idxs].set(self.w_flat)
-        return jnp.einsum("i,io->o", x, w_full) + self.bias
+from bijax import MAF, PLU, RQS, CausalLinear
 
 
 class CausalMLP(eqx.Module):
@@ -271,3 +182,112 @@ class CausalMLP(eqx.Module):
         if self.out_rank_dim == "scalar":
             return h
         return h.reshape(self.num_ranks, self.out_rank_dim)  # (l*do,) -> (l, do)
+
+
+def two_moons(key: Key[Array, ""], n: int, noise: float = 0.1) -> Float[Array, "n 2"]:
+    """Sample a standardized two-moons cloud."""
+    n_out = n // 2
+    n_in = n - n_out
+    t_out = jnp.linspace(0, jnp.pi, n_out)
+    outer = jnp.stack([jnp.cos(t_out), jnp.sin(t_out)], axis=-1)
+    t_in = jnp.linspace(0, jnp.pi, n_in)
+    inner = jnp.stack([1.0 - jnp.cos(t_in), 0.5 - jnp.sin(t_in)], axis=-1)
+    x = jnp.concatenate([outer, inner], axis=0)
+    x = x + noise * jr.normal(key, x.shape)
+    return (x - x.mean(0)) / x.std(0)
+
+
+def make_flow(
+    key: Key[Array, ""],
+    dim: int = 2,
+    n_bins: int = 8,
+    width: int = 64,
+    depth: int = 2,
+    n_layers: int = 2,
+) -> list[eqx.Module]:
+    """Build spline layers ordered from base to data, with PLU mixing between."""
+    transform = RQS(n_bins)
+    layers = []
+    for i, k in enumerate(jr.split(key, n_layers)):
+        k_net, k_mix = jr.split(k)
+        if i > 0:
+            layers.append(PLU(dim, rng=k_mix))
+        net = CausalMLP(
+            num_ranks=dim,
+            in_rank_dim="scalar",
+            out_rank_dim=transform.n_params,
+            width=width,
+            depth=depth,
+            rng=k_net,
+        )
+        layers.append(MAF(net, transform))
+    return layers
+
+
+def log_prob(layers: list[eqx.Module], x: Float[Array, " d"]) -> Float[Array, ""]:
+    """Log density at ``x`` under a standard normal base."""
+    total = 0.0
+    for layer in reversed(layers):
+        x, ld = layer.inv_logdet(x)
+        total = total + ld
+    return norm.logpdf(x).sum() + total
+
+
+def sample(
+    layers: list[eqx.Module], key: Key[Array, ""], n: int, dim: int = 2
+) -> Float[Array, "n d"]:
+    """Draw ``n`` samples by pushing base noise through the layers."""
+
+    def push(z):
+        for layer in layers:
+            z, _ = layer.fwd_logdet(z)
+        return z
+
+    return jax.vmap(push)(jr.normal(key, (n, dim)))
+
+
+def mean_nll(layers: list[eqx.Module], data: Float[Array, "n d"]) -> Float[Array, ""]:
+    """Mean negative log-likelihood of ``data``."""
+    return -jax.vmap(lambda x: log_prob(layers, x))(data).mean()
+
+
+def train(
+    layers: list[eqx.Module],
+    data: Float[Array, "n d"],
+    *,
+    steps: int = 600,
+    lr: float = 5e-3,
+    batch: int = 256,
+    seed: int = 0,
+    log_every: int | None = None,
+) -> tuple[list[eqx.Module], float, float]:
+    """Fit by maximum likelihood with Adam; return the layers and initial/final NLL."""
+    opt = optax.adam(lr)
+    opt_state = opt.init(eqx.filter(layers, eqx.is_inexact_array))
+
+    @eqx.filter_jit
+    def step(m, opt_state, xb):
+        loss, grads = eqx.filter_value_and_grad(mean_nll)(m, xb)
+        updates, opt_state = opt.update(
+            grads, opt_state, eqx.filter(m, eqx.is_inexact_array)
+        )
+        return eqx.apply_updates(m, updates), opt_state, loss
+
+    init_nll = float(mean_nll(layers, data))
+    key = jr.key(seed)
+    for i in range(steps):
+        key, k = jr.split(key)
+        idx = jr.randint(k, (batch,), 0, data.shape[0])
+        layers, opt_state, loss = step(layers, opt_state, data[idx])
+        if log_every and (i + 1) % log_every == 0:
+            print(f"step {i + 1}/{steps} | nll={float(loss):.3f}", flush=True)
+    return layers, init_nll, float(mean_nll(layers, data))
+
+
+if __name__ == "__main__":
+    data = two_moons(jr.key(42), 2000)
+    steps = 2000
+    _, init_nll, final_nll = train(
+        make_flow(jr.key(0)), data, steps=steps, log_every=steps // 20
+    )
+    print(f"nll {init_nll:.3f} -> {final_nll:.3f}")

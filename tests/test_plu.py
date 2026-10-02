@@ -81,3 +81,13 @@ def test_plub_permutation_and_signs_get_zero_gradient():
     grads = eqx.filter_grad(loss)(m)
     assert jnp.allclose(grads.p, 0.0)
     assert jnp.allclose(grads.signs, 0.0)
+
+
+def test_plub_ignores_the_condition_and_rng():
+    m = _make_plub(4)
+    x = jr.normal(jr.key(2), (4,))
+    for method in ("fwd_logdet", "inv_logdet"):
+        bare = getattr(m, method)(x)
+        full = getattr(m, method)(x, jnp.ones(3), rng=jr.key(1))
+        for a, b in zip(bare, full, strict=True):
+            assert jnp.array_equal(a, b)
