@@ -175,3 +175,14 @@ def test_works_under_jit(transform, atol):
     y, _ = eqx.filter_jit(lambda m, x: m.fwd_logdet(x))(m, x)
     xr, _ = eqx.filter_jit(lambda m, y: m.inv_logdet(y))(m, y)
     assert jnp.allclose(xr, x, atol=atol)
+
+
+@TRANSFORMS
+def test_an_empty_identity_set_roundtrips_from_the_condition_alone(transform, atol):
+    shape = (1, transform.n_params)
+    m = Coupling(MLP(0, shape, 3, rng=jr.key(70)), transform, (), (0,))
+    x, c = jr.normal(jr.key(71), (1,)), jr.normal(jr.key(72), (3,))
+    y, ld_fwd = m.fwd_logdet(x, c)
+    xr, ld_inv = m.inv_logdet(y, c)
+    assert jnp.allclose(xr, x, atol=atol)
+    assert jnp.allclose(ld_fwd + ld_inv, 0.0, atol=atol)

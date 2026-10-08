@@ -361,3 +361,29 @@ def test_float64_roundtrip_is_exact_for_extreme_params(n_bins, bounds, scale):
             assert jnp.all(jnp.diff(y) > 0)
             assert jnp.max(jnp.abs(xr - x)) < 1e-7 * _span(bounds)
             assert jnp.max(jnp.abs(ld + ldi)) < 1e-6
+
+
+@pytest.mark.parametrize("ulps_below", [1, 2, 8, 64, 1024])
+def test_inverse_is_accurate_just_below_a_knot_between_a_steep_and_a_flat_slope(
+    ulps_below,
+):
+    slopes = jnp.log(jnp.array([100.0, 0.01, 1.0]))
+    spline = _RQSpline(
+        k_ws=jnp.array([0.84, 0.16]),
+        k_hs=jnp.array([0.013, 0.987]),
+        log_k_dls=slopes[:-1],
+        log_k_drs=slopes[1:],
+        lower=0.0,
+        upper=1.0,
+    )
+    knot = spline.bounds()[1][1]
+    y = knot
+    for _ in range(ulps_below):
+        y = jnp.nextafter(y, 0.0)
+    x, ld_inv = spline.inv_logdxdy(y)
+    y_back, ld_fwd = spline.fwd_logdydx(x)
+    assert y_back == pytest.approx(float(y), abs=1e-6)
+    assert ld_inv == pytest.approx(-float(ld_fwd), abs=1e-3)
+    grad = jax.grad(lambda y: spline.inv_logdxdy(y)[1])(y)
+    assert jnp.isfinite(grad)
+    assert grad != 0

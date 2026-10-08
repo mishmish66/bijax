@@ -65,7 +65,8 @@ class Coupling(eqx.Module):
         return self._apply(self.transform.inv, y, c, rng)
 
     def _apply(self, f, x, c, rng):
-        id_ix, tr_ix = jnp.array(self.id_idxs), jnp.array(self.tr_idxs)
+        id_ix = jnp.array(self.id_idxs, dtype=int)
+        tr_ix = jnp.array(self.tr_idxs, dtype=int)
         shape = (len(self.tr_idxs), self.transform.n_params)
         params = condition(self.conditioner, x[id_ix], c, rng, shape)
         out, ld = jax.vmap(f)(x[tr_ix], params)

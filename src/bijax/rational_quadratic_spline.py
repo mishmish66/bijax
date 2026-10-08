@@ -18,6 +18,31 @@ from jax import numpy as jnp
 from jaxtyping import Array, Float, jaxtyped
 
 
+def _knot_distance(
+    θ: Float[Array, ""],
+    θc: Float[Array, ""],
+    s: Float[Array, ""],
+    d: Float[Array, ""],
+    dc: Float[Array, ""],
+) -> Float[Array, ""]:
+    """Fraction of a bin's width between a knot and the x that lies ``θ`` from it in y.
+
+    ``θc`` is the y distance to the bin's other knot, ``s`` the bin's mean slope,
+    and ``d`` and ``dc`` the slopes at this knot and the other. Solves eqs 29-32 of
+    Neural Spline Flows with the coefficients written in ``θ`` and ``θc``.
+    """
+    a = θc * (s - d) + θ * (dc - s)
+    b = θc * d + θ * (2 * s - dc)
+    c = -s * θ
+    bsqm4ac = b**2 - 4 * a * c
+    safe_sqin = jnp.where(bsqm4ac > 0, bsqm4ac, 1.0)
+    disc = jnp.where(bsqm4ac > 0, jnp.sqrt(safe_sqin), 0.0)
+    bsign = jnp.where(b >= 0, 1.0, -1.0)
+    q = -0.5 * (b + bsign * disc)
+    a_safe = jax.lax.select(b >= 0, 1.0, a)
+    return jnp.clip(jax.lax.select(b >= 0, c / q, q / a_safe), 0.0, 1.0)
+
+
 @jaxtyped(typechecker=beartype)
 class _RQSpline(eqx.Module):
     """Rational Quadratic Spline."""
@@ -141,19 +166,15 @@ class _RQSpline(eqx.Module):
         s = (yrb - ylb) / (xrb - xlb)
         dl, dr = jnp.exp(log_dl), jnp.exp(log_dr)
 
-        # eqs 29, 30, 31, 32
-        a = (yrb - ylb) * (s - dl) + (y - ylb) * (dr + dl - 2 * s)
-        b = (yrb - ylb) * dl - (y - ylb) * (dr + dl - 2 * s)
-        c = -s * (y - ylb)
-        bsqm4ac = b**2 - 4 * a * c
-        safe_sqin = jnp.where(bsqm4ac > 0, bsqm4ac, 1.0)
-        disc = jnp.where(bsqm4ac > 0, jnp.sqrt(safe_sqin), 0.0)
-        bsign = jnp.where(b >= 0, 1.0, -1.0)
-        q = -0.5 * (b + bsign * disc)
-        a_safe = jax.lax.select(b >= 0, 1.0, a)
-        ζomζ = (ζ := jax.lax.select(b >= 0, c / q, q / a_safe)) * (omζ := 1 - ζ)
+        # ζ and 1 - ζ, each solved from the knot it is the distance from
+        ζl = _knot_distance(y - ylb, yrb - y, s, dl, dr)
+        ζr = _knot_distance(yrb - y, y - ylb, s, dr, dl)
+        from_left = ζl <= ζr
+        ζ = jnp.where(from_left, ζl, 1 - ζr)
+        omζ = jnp.where(from_left, 1 - ζl, ζr)
+        ζomζ = ζ * omζ
 
-        x = xlb + ζ * (xrb - xlb)
+        x = jnp.where(from_left, xlb + ζ * (xrb - xlb), xrb - omζ * (xrb - xlb))
         ld = (
             -2 * jnp.log(s)
             - jnp.log(dr * ζ**2 + 2 * s * ζomζ + dl * omζ**2)
